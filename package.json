@@ -1,0 +1,27 @@
+{
+  "name": "invoice-smart-rename",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev:api": "uv run --project backend python backend/run_dev.py",
+    "dev:web": "vite --config frontend/vite.config.ts",
+    "build:web": "vue-tsc -b frontend/tsconfig.json && vite build --config frontend/vite.config.ts",
+    "tauri:dev": "node scripts/tauri-dev.mjs",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.4.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "axios": "^1.8.2",
+    "naive-ui": "^2.40.4",
+    "pinia": "^3.0.1",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.2.5",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0",
+    "vue-tsc": "^2.2.2"
+  }
+}

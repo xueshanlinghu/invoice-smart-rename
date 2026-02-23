@@ -1,0 +1,32 @@
+[project]
+name = "invoice-smart-rename-backend"
+version = "0.1.0"
+description = "Cloud VLM invoice recognition and rename service"
+readme = "../README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.6",
+  "httpx>=0.28.1",
+  "pillow>=11.3.0",
+  "pydantic-settings>=2.7.1",
+  "pypdfium2>=4.30.0",
+  "python-dotenv>=1.0.1",
+  "python-multipart>=0.0.19",
+  "uvicorn[standard]>=0.34.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.4",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
