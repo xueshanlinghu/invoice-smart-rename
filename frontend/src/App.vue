@@ -5,6 +5,7 @@ import {
   NCheckbox,
   NConfigProvider,
   NDatePicker,
+  NDynamicTags,
   NEmpty,
   NInput,
   NInputNumber,
@@ -18,31 +19,46 @@ import {
   NTabs,
   NTag,
 } from "naive-ui";
+import Draggable from "vuedraggable";
 import { useInvoiceStore } from "./stores/invoice";
 import { isTauriRuntime } from "./api/tauri";
 import type { InvoiceItem } from "./api/types";
 
+const INVALID_FILENAME_CHAR_PATTERN = /[<>:"/\\|?*\x00-\x1F]/g;
+const SETTINGS_LOCAL_API_KEY = "invoice.smart-rename.siliconflow-api-key";
+const DEFAULT_TEMPLATE = "{date}-{category}-{amount}";
+
+type MappingRow = { id: string; category: string; keywords: string[] };
+
+type SettingsSnapshot = {
+  model: string;
+  template: string;
+  mappingSignature: string;
+  localApiKey: string;
+};
+
 const store = useInvoiceStore();
 const activeTab = ref("work");
-const filenameTemplate = ref("{date}-{category}-{amount}");
-const templateSaving = ref(false);
-const templateSaveHint = ref("");
+
+const filenameTemplate = ref(DEFAULT_TEMPLATE);
 const selectedModel = ref("Qwen/Qwen3-VL-32B-Instruct");
 const apiKeyInput = ref("");
-const cloudConfigSaving = ref(false);
-const cloudConfigHint = ref("");
-type MappingRow = { id: string; category: string; keywords: string };
 const mappingRows = ref<MappingRow[]>([]);
-const mappingSaving = ref(false);
-const mappingSaveHint = ref("");
+const settingsSaving = ref(false);
+const settingsSaveHint = ref("");
+const settingsSnapshot = ref<SettingsSnapshot>({
+  model: "",
+  template: DEFAULT_TEMPLATE,
+  mappingSignature: "",
+  localApiKey: "",
+});
+
 const showDeleteConfirm = ref(false);
 const pendingDeleteRowId = ref<string | null>(null);
 const showRenameConfirm = ref(false);
 const showClearConfirm = ref(false);
 const dragging = ref(false);
 let unlistenTauriDrop: null | (() => void) = null;
-let mappingSaveTimer: ReturnType<typeof setTimeout> | null = null;
-const lastSavedMappingSignature = ref("");
 
 const summaryText = computed(() => {
   const summary = store.task?.summary;
@@ -65,15 +81,27 @@ const renameDisabledReason = computed(() => {
 const canExecuteRename = computed(
   () => store.hasTask && hasSelection.value && !hasSelectedEmptyNewName.value && !store.loading,
 );
+
 const modelOptions = computed(() =>
   (store.settings?.siliconflow_models ?? []).map((item) => ({ label: item, value: item })),
 );
-const apiKeyConfigured = computed(() => Boolean(store.settings?.api_key_configured));
+
+const apiKeyConfigured = computed(() => Boolean(apiKeyInput.value.trim() || store.settings?.api_key_configured));
 const statusBarText = computed(() => store.message || "就绪");
 const recognizeProgressText = computed(() => {
   if (!store.recognizeTotal) return "";
   return `识别进度 ${store.recognizeDone}/${store.recognizeTotal}（${store.recognizePercent}%）`;
 });
+
+const normalizedTemplatePreview = computed(() => normalizeTemplate(filenameTemplate.value));
+const currentMappingSignature = computed(() => mappingSignature(rowsToMapping(mappingRows.value)));
+const backendSettingsChanged = computed(
+  () => selectedModel.value !== settingsSnapshot.value.model
+    || normalizedTemplatePreview.value !== settingsSnapshot.value.template
+    || currentMappingSignature.value !== settingsSnapshot.value.mappingSignature,
+);
+const localApiKeyChanged = computed(() => apiKeyInput.value.trim() !== settingsSnapshot.value.localApiKey);
+const hasPendingSettingsChanges = computed(() => backendSettingsChanged.value || localApiKeyChanged.value);
 
 onMounted(async () => {
   await store.loadSettings();
@@ -89,70 +117,114 @@ watch(
   { deep: true },
 );
 
+function loadLocalApiKey(): string {
+  try {
+    return localStorage.getItem(SETTINGS_LOCAL_API_KEY)?.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
+function persistLocalApiKey(nextValue: string) {
+  const value = nextValue.trim();
+  try {
+    if (value) {
+      localStorage.setItem(SETTINGS_LOCAL_API_KEY, value);
+    } else {
+      localStorage.removeItem(SETTINGS_LOCAL_API_KEY);
+    }
+  } catch {
+    // ignore runtime storage errors
+  }
+}
+
 function syncSettingsToForm() {
   const settings = store.settings;
   if (!settings) return;
-  filenameTemplate.value = settings.filename_template || "{date}-{category}-{amount}";
+
+  filenameTemplate.value = normalizeTemplate(settings.filename_template || DEFAULT_TEMPLATE);
   selectedModel.value = settings.siliconflow_model || "Qwen/Qwen3-VL-32B-Instruct";
-  const incomingSignature = mappingSignature(settings.category_mapping);
-  const localSignature = mappingSignature(rowsToMapping(mappingRows.value));
-  if (incomingSignature !== localSignature) {
-    mappingRows.value = mappingToRows(settings.category_mapping);
-  }
-  lastSavedMappingSignature.value = incomingSignature;
+  mappingRows.value = mappingToRows(settings.category_mapping);
+
+  const localApiKey = loadLocalApiKey();
+  apiKeyInput.value = localApiKey;
+  store.setSessionApiKey(localApiKey);
+
+  settingsSnapshot.value = {
+    model: selectedModel.value,
+    template: filenameTemplate.value,
+    mappingSignature: mappingSignature(rowsToMapping(mappingRows.value)),
+    localApiKey,
+  };
 }
 
 function nextRowId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
+function sanitizeCategoryText(raw: string): string {
+  return raw.replace(INVALID_FILENAME_CHAR_PATTERN, "");
+}
+
 function normalizeTemplate(raw: string): string {
   let value = raw.trim();
   if (!value) {
-    return "{date}-{category}-{amount}";
+    return DEFAULT_TEMPLATE;
   }
   value = value.replace(/\{ext\}/gi, "");
   value = value.replace(/\.[A-Za-z0-9]{1,12}$/g, "");
   value = value.replace(/[-_.\s]+$/g, "");
-  return value || "{date}-{category}-{amount}";
+  return value || DEFAULT_TEMPLATE;
 }
 
-async function onTemplateBlur() {
-  const normalized = normalizeTemplate(filenameTemplate.value);
-  filenameTemplate.value = normalized;
-  templateSaving.value = true;
-  try {
-    await store.saveTemplate(normalized);
-    templateSaveHint.value = store.hasTask
-      ? `模板已保存并应用：${new Date().toLocaleTimeString()}`
-      : `模板已保存：${new Date().toLocaleTimeString()}`;
-  } catch {
-    // error message is handled in store
-  } finally {
-    templateSaving.value = false;
+function normalizeKeywords(values: string[]): string[] {
+  const unique = new Set<string>();
+  for (const value of values) {
+    const cleaned = value.trim();
+    if (!cleaned) continue;
+    unique.add(cleaned);
   }
+  return Array.from(unique);
 }
 
-async function saveCloudConfig() {
-  if (!selectedModel.value) return;
-  cloudConfigSaving.value = true;
+async function saveAllSettings() {
+  if (!store.settings) return;
+  if (!hasPendingSettingsChanges.value) {
+    settingsSaveHint.value = "当前没有需要保存的改动";
+    return;
+  }
+
+  settingsSaving.value = true;
   try {
-    const payload: {
-      siliconflow_model: string;
-      siliconflow_api_key?: string;
-    } = {
-      siliconflow_model: selectedModel.value,
-    };
-    if (apiKeyInput.value.trim()) {
-      payload.siliconflow_api_key = apiKeyInput.value.trim();
+    const normalizedTemplate = normalizeTemplate(filenameTemplate.value);
+    filenameTemplate.value = normalizedTemplate;
+    const mapping = rowsToMapping(mappingRows.value);
+
+    if (backendSettingsChanged.value) {
+      await store.saveSettings({
+        siliconflow_model: selectedModel.value,
+        filename_template: normalizedTemplate,
+        category_mapping: mapping,
+      });
     }
-    await store.saveSettings(payload);
-    apiKeyInput.value = "";
-    cloudConfigHint.value = `云模型配置已保存：${new Date().toLocaleTimeString()}`;
+
+    const localApiKey = apiKeyInput.value.trim();
+    persistLocalApiKey(localApiKey);
+    store.setSessionApiKey(localApiKey);
+
+    settingsSnapshot.value = {
+      model: selectedModel.value,
+      template: normalizedTemplate,
+      mappingSignature: mappingSignature(mapping),
+      localApiKey,
+    };
+
+    settingsSaveHint.value = `配置已保存：${new Date().toLocaleTimeString()}`;
+    store.message = "设置已保存";
   } catch {
-    // error message is handled in store
+    // error message handled in store
   } finally {
-    cloudConfigSaving.value = false;
+    settingsSaving.value = false;
   }
 }
 
@@ -161,65 +233,40 @@ function mappingToRows(mapping: Record<string, string[]>): MappingRow[] {
     .filter(([category]) => category.trim() && category.trim() !== "其他")
     .map(([category, keywords]) => ({
       id: nextRowId(),
-      category,
-      keywords: keywords.join(", "),
+      category: sanitizeCategoryText(category),
+      keywords: normalizeKeywords(keywords),
     }));
-  return rows.length ? rows : [{ id: nextRowId(), category: "", keywords: "" }];
+  return rows.length ? rows : [{ id: nextRowId(), category: "", keywords: [] }];
 }
 
 function rowsToMapping(rows: MappingRow[]): Record<string, string[]> {
   const mapping: Record<string, string[]> = {};
   for (const row of rows) {
-    const category = row.category.trim();
+    const category = sanitizeCategoryText(row.category).trim();
     if (!category || category === "其他") continue;
-    const keywords = row.keywords
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    mapping[category] = keywords;
+    mapping[category] = normalizeKeywords(row.keywords);
   }
   return mapping;
 }
 
 function mappingSignature(mapping: Record<string, string[]>): string {
-  const ordered = Object.entries(mapping)
-    .sort(([left], [right]) => left.localeCompare(right, "zh-CN"))
-    .map(([category, keywords]) => [category, [...keywords].sort()]);
-  return JSON.stringify(ordered);
-}
-
-function scheduleMappingAutoSave() {
-  if (mappingSaveTimer) {
-    clearTimeout(mappingSaveTimer);
-  }
-  mappingSaveTimer = setTimeout(() => {
-    void autoSaveMapping();
-  }, 320);
-}
-
-async function autoSaveMapping() {
-  const mapping = rowsToMapping(mappingRows.value);
-  const nextSignature = mappingSignature(mapping);
-  if (nextSignature === lastSavedMappingSignature.value) return;
-
-  mappingSaving.value = true;
-  try {
-    await store.saveMapping(mapping);
-    lastSavedMappingSignature.value = nextSignature;
-    mappingSaveHint.value = `已自动保存：${new Date().toLocaleTimeString()}`;
-  } catch {
-    // error message is handled in store
-  } finally {
-    mappingSaving.value = false;
-  }
+  return JSON.stringify(Object.entries(mapping));
 }
 
 function addMappingRow() {
   mappingRows.value.push({
     id: nextRowId(),
     category: "",
-    keywords: "",
+    keywords: [],
   });
+}
+
+function onMappingCategoryUpdate(row: MappingRow, value: string) {
+  row.category = sanitizeCategoryText(value);
+}
+
+function onMappingKeywordsUpdate(row: MappingRow, values: string[]) {
+  row.keywords = normalizeKeywords(values);
 }
 
 function removeMappingRow(id: string) {
@@ -264,7 +311,7 @@ function onDateUpdate(item: InvoiceItem, value: string | null) {
 }
 
 function onCategoryUpdate(item: InvoiceItem, value: string) {
-  store.setItemCategory(item.id, value);
+  store.setItemCategory(item.id, sanitizeCategoryText(value));
 }
 
 function parseAmountNumber(raw: string | null): number | null {
@@ -440,18 +487,33 @@ async function bindTauriDropEvents() {
     if (!win.onDragDropEvent) return;
 
     const unlisten = await win.onDragDropEvent((event) => {
-      const payload = event.payload;
-      const type = payload?.type;
+      const raw = event as unknown as {
+        type?: string;
+        payload?: { type?: string; paths?: string[] } | string[] | null;
+      };
+      const payload = raw.payload;
+      const payloadAsRecord = payload && !Array.isArray(payload) ? payload : null;
+      const type = payloadAsRecord?.type || raw.type;
+
       if (type === "over") {
         dragging.value = true;
         return;
       }
-      if (type === "drop") {
+
+      if (type === "drop" || (!type && Array.isArray(payload))) {
         dragging.value = false;
-        const paths = (payload?.paths ?? []).map((item) => toWindowsLikePath(String(item)));
-        void importByPaths(paths);
+        const rawPaths = Array.isArray(payload)
+          ? payload
+          : Array.isArray(payloadAsRecord?.paths)
+            ? payloadAsRecord?.paths
+            : [];
+        const paths = rawPaths.map((item) => toWindowsLikePath(String(item))).filter(Boolean);
+        if (paths.length) {
+          void importByPaths(paths);
+        }
         return;
       }
+
       dragging.value = false;
     });
 
@@ -492,23 +554,11 @@ async function confirmClearList() {
 }
 
 onUnmounted(() => {
-  if (mappingSaveTimer) {
-    clearTimeout(mappingSaveTimer);
-    mappingSaveTimer = null;
-  }
   if (unlistenTauriDrop) {
     unlistenTauriDrop();
     unlistenTauriDrop = null;
   }
 });
-
-watch(
-  mappingRows,
-  () => {
-    scheduleMappingAutoSave();
-  },
-  { deep: true },
-);
 </script>
 
 <template>
@@ -668,25 +718,26 @@ watch(
               <div class="settings-stack">
                 <div>
                   <label class="label">云模型配置</label>
-                  <n-space vertical>
+                  <div class="setting-row">
+                    <span class="setting-label">模型选择</span>
                     <n-select
                       v-model:value="selectedModel"
                       :options="modelOptions"
                       placeholder="选择模型"
                     />
+                  </div>
+                  <div class="setting-row">
+                    <span class="setting-label">硅基流动 API Key</span>
                     <n-input
                       v-model:value="apiKeyInput"
                       type="password"
                       show-password-on="click"
-                      placeholder="如需更新 API Key，请输入新值；留空则沿用 .env"
+                      placeholder="可输入本机专用 API Key（仅保存到 localStorage）"
                     />
-                    <n-space>
-                      <n-button type="primary" :loading="cloudConfigSaving" @click="saveCloudConfig">保存云配置</n-button>
-                      <span class="tip" v-if="apiKeyConfigured">当前已检测到 .env 中存在 API Key</span>
-                      <span class="tip" v-else>当前未检测到 API Key，识别会失败</span>
-                    </n-space>
-                    <span class="tip" v-if="cloudConfigHint">{{ cloudConfigHint }}</span>
-                  </n-space>
+                  </div>
+                  <p class="tip">说明：此处 API Key 仅保存到本机 localStorage，不写入 .env 文件。</p>
+                  <p class="tip" v-if="apiKeyConfigured">当前已检测到可用 API Key（本地或 .env）</p>
+                  <p class="tip" v-else>当前未检测到 API Key，识别会失败</p>
                 </div>
 
                 <div>
@@ -694,12 +745,9 @@ watch(
                   <n-input
                     v-model:value="filenameTemplate"
                     placeholder="{date}-{category}-{amount}"
-                    @blur="onTemplateBlur"
                   />
                   <p class="tip">扩展名固定沿用原文件扩展名，模板不允许修改扩展名。</p>
                   <p class="tip">可用变量：{date}、{category}、{amount}</p>
-                  <p class="tip" v-if="templateSaving">模板保存中...</p>
-                  <p class="tip" v-else-if="templateSaveHint">{{ templateSaveHint }}</p>
                 </div>
 
                 <div class="mapping-section">
@@ -710,21 +758,68 @@ watch(
                   <p class="tip">无需配置“其他”，未命中关键词时自动归类为“其他”。</p>
                   <div class="mapping-table">
                     <div class="mapping-row mapping-row-head">
-                      <div>类别</div>
-                      <div>关键词（逗号分隔）</div>
+                      <div>优先级 / 类别</div>
+                      <div>关键词（回车生成标签）</div>
                       <div>操作</div>
                     </div>
-                    <div class="mapping-row" v-for="row in mappingRows" :key="row.id">
-                      <n-input v-model:value="row.category" placeholder="例如：餐饮" />
-                      <n-input v-model:value="row.keywords" placeholder="例如：餐饮, 餐费, 糕点" />
-                      <n-button size="small" quaternary @click="askRemoveMappingRow(row.id)">删除</n-button>
-                    </div>
+                    <Draggable
+                      v-model="mappingRows"
+                      item-key="id"
+                      handle=".mapping-drag-handle"
+                      class="mapping-draggable-list"
+                      ghost-class="mapping-row-ghost"
+                      chosen-class="mapping-row-chosen"
+                      drag-class="mapping-row-drag"
+                      :animation="160"
+                      :force-fallback="true"
+                      :fallback-on-body="true"
+                      :fallback-tolerance="2"
+                    >
+                      <template #item="{ element: row, index }">
+                        <div class="mapping-row">
+                          <div class="mapping-category-cell">
+                            <span class="mapping-order-badge">{{ index + 1 }}</span>
+                            <n-input
+                              :value="row.category"
+                              placeholder="例如：餐饮"
+                              @update:value="(v) => onMappingCategoryUpdate(row, v)"
+                            />
+                          </div>
+                          <n-dynamic-tags
+                            class="mapping-keywords"
+                            :value="row.keywords"
+                            :input-style="{ width: '240px', minWidth: '240px' }"
+                            :input-props="{ placeholder: '输入关键词后回车' }"
+                            @update:value="onMappingKeywordsUpdate(row, $event)"
+                          />
+                          <n-space class="mapping-actions" :size="6">
+                            <button
+                              type="button"
+                              class="mapping-drag-handle"
+                              title="拖拽调整优先级"
+                            >
+                              拖拽排序
+                            </button>
+                            <n-button size="small" quaternary @click="askRemoveMappingRow(row.id)">删除</n-button>
+                          </n-space>
+                        </div>
+                      </template>
+                    </Draggable>
                   </div>
-                  <n-space>
-                    <span class="tip">输入后自动保存，下一次识别将使用新映射。</span>
-                    <span class="tip" v-if="mappingSaving">保存中...</span>
-                    <span class="tip" v-else-if="mappingSaveHint">{{ mappingSaveHint }}</span>
-                  </n-space>
+                  <p class="tip">可拖拽“拖拽”手柄调整优先级。匹配从上到下，命中第一条类别后立即停止；未命中则归类为“其他”。</p>
+                </div>
+
+                <div class="settings-actions">
+                  <n-button
+                    type="primary"
+                    :loading="settingsSaving"
+                    :disabled="!hasPendingSettingsChanges"
+                    @click="saveAllSettings"
+                  >
+                    保存配置
+                  </n-button>
+                  <span class="tip" v-if="settingsSaveHint">{{ settingsSaveHint }}</span>
+                  <span class="tip" v-else-if="hasPendingSettingsChanges">有未保存的设置改动</span>
                 </div>
               </div>
             </section>

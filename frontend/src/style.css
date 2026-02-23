@@ -149,7 +149,7 @@ table {
 }
 
 .col-category {
-  width: 120px;
+  width: 90px;
 }
 
 .col-amount {
@@ -210,6 +210,20 @@ tbody tr:hover {
   gap: 18px;
 }
 
+.setting-row {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.setting-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2e525a;
+}
+
 .mapping-section {
   display: flex;
   flex-direction: column;
@@ -248,7 +262,7 @@ tbody tr:hover {
 
 .mapping-row {
   display: grid;
-  grid-template-columns: minmax(140px, 0.28fr) minmax(240px, 1fr) 82px;
+  grid-template-columns: minmax(200px, 0.3fr) minmax(240px, 1fr) 132px;
   gap: 10px;
   align-items: center;
   padding: 10px 12px;
@@ -264,6 +278,152 @@ tbody tr:hover {
   font-weight: 600;
   color: #2b5057;
   background: rgba(219, 239, 236, 0.56);
+}
+
+.mapping-category-cell {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.mapping-order-badge {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #2f5f66;
+  background: rgba(203, 230, 227, 0.72);
+}
+
+.mapping-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.mapping-draggable-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.mapping-row-ghost {
+  background: rgba(194, 231, 227, 0.32);
+}
+
+.mapping-row-chosen {
+  background: rgba(214, 240, 236, 0.45);
+}
+
+.mapping-row-drag {
+  box-shadow: 0 6px 16px rgba(30, 91, 84, 0.18);
+}
+
+.mapping-drag-handle {
+  height: 28px;
+  min-width: 78px;
+  padding: 0 10px;
+  border-radius: 11px;
+  border: 1px dashed rgba(38, 112, 105, 0.36);
+  background: rgba(233, 247, 245, 0.7);
+  color: #2a6a6f;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: grab;
+}
+
+.mapping-drag-handle:hover {
+  border-color: rgba(33, 128, 119, 0.6);
+  background: rgba(223, 243, 240, 0.92);
+}
+
+.mapping-drag-handle:active {
+  cursor: grabbing;
+}
+
+.mapping-keywords .n-tag {
+  transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 1) .n-tag {
+  background-color: #eef9f4 !important;
+  color: #246b52 !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 1) .n-tag .n-tag__border {
+  border-color: #bde7d2 !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 1) .n-tag .n-tag__close .n-base-icon {
+  color: #246b52 !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 2) .n-tag {
+  background-color: #edf6ff !important;
+  color: #2f6398 !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 2) .n-tag .n-tag__border {
+  border-color: #c8dff8 !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 2) .n-tag .n-tag__close .n-base-icon {
+  color: #2f6398 !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 3) .n-tag {
+  background-color: #fff3ea !important;
+  color: #9a5a2e !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 3) .n-tag .n-tag__border {
+  border-color: #f7d8bf !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 3) .n-tag .n-tag__close .n-base-icon {
+  color: #9a5a2e !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 4) .n-tag {
+  background-color: #f4efff !important;
+  color: #5f4a96 !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 4) .n-tag .n-tag__border {
+  border-color: #ddcff7 !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 4) .n-tag .n-tag__close .n-base-icon {
+  color: #5f4a96 !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 5) .n-tag {
+  background-color: #fff8e6 !important;
+  color: #8b6a1c !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 5) .n-tag .n-tag__border {
+  border-color: #f2dfac !important;
+}
+
+.mapping-keywords > [role="none"]:nth-child(5n + 5) .n-tag .n-tag__close .n-base-icon {
+  color: #8b6a1c !important;
+}
+
+.mapping-keywords .n-dynamic-tags-input {
+  min-width: 220px;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .label {
@@ -372,6 +532,11 @@ tbody tr:hover {
   .mapping-row {
     grid-template-columns: 1fr;
     gap: 8px;
+  }
+
+  .setting-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 
   .status-bar {

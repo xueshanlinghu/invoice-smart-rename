@@ -14,11 +14,11 @@ DEFAULT_MODEL_CHOICES = [
 ]
 DEFAULT_TEMPLATE = "{date}-{category}-{amount}"
 DEFAULT_CATEGORY_MAPPING: dict[str, list[str]] = {
-    "餐饮": ["餐饮", "餐饮服务", "糕点", "餐费", "餐厅"],
-    "培训/服务": ["培训", "技术培训", "服务费", "信息技术", "信息服务"],
-    "交通": ["交通", "打车", "机票", "高铁", "火车", "出行"],
-    "办公": ["办公", "办公用品", "文具", "耗材"],
-    "住宿": ["住宿", "酒店", "宾馆"],
+    # 顺序即优先级，保持与 .env.example 初始配置一致
+    "餐饮": ["餐饮服务", "糕点"],
+    "技术服务": ["研发和技术服务", "信息系统增值服务"],
+    "会员订阅": ["会员订阅"],
+    "信息技术培训费": ["信息技术培训费", "非学历教育服务"],
 }
 
 ENV_PATH = ROOT_DIR / ".env"
@@ -135,15 +135,10 @@ def save_runtime_settings(
 
 def infer_category(item_name: str | None, filename: str, mapping: dict[str, list[str]]) -> str:
     source = f"{item_name or ''}\n{filename}".lower()
-    best_category = "其他"
-    best_weight = 0
+    # 按映射顺序匹配：命中首个类别后立即返回
     for category, keywords in mapping.items():
-        weight = 0
         for keyword in keywords:
             token = keyword.strip().lower()
             if token and token in source:
-                weight += 1
-        if weight > best_weight:
-            best_weight = weight
-            best_category = category
-    return best_category
+                return category
+    return "其他"

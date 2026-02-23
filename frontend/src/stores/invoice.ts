@@ -34,10 +34,12 @@ interface InvoiceState {
   isRecognizing: boolean;
   recognizeTotal: number;
   recognizeDone: number;
+  sessionApiKey: string;
   localEdits: Record<string, { invoice_date: string | null; amount: string | null; category: string | null }>;
 }
 
 const DEFAULT_TEMPLATE = "{date}-{category}-{amount}";
+const INVALID_FILENAME_CHAR_PATTERN = /[<>:"/\\|?*\x00-\x1F]/g;
 
 export const useInvoiceStore = defineStore("invoice", {
   state: (): InvoiceState => ({
@@ -50,6 +52,7 @@ export const useInvoiceStore = defineStore("invoice", {
     isRecognizing: false,
     recognizeTotal: 0,
     recognizeDone: 0,
+    sessionApiKey: "",
     localEdits: {},
   }),
   getters: {
@@ -107,6 +110,13 @@ export const useInvoiceStore = defineStore("invoice", {
     normalizeNullableText(value: string | null | undefined): string | null {
       const text = (value ?? "").trim();
       return text || null;
+    },
+    sanitizeCategoryText(value: string | null | undefined): string | null {
+      const text = (value ?? "").replace(INVALID_FILENAME_CHAR_PATTERN, "");
+      return this.normalizeNullableText(text);
+    },
+    setSessionApiKey(value: string | null | undefined) {
+      this.sessionApiKey = (value ?? "").trim();
     },
     handleError(error: unknown) {
       const maybeAxios = error as { response?: { data?: { detail?: string } }; message?: string };
@@ -182,7 +192,7 @@ export const useInvoiceStore = defineStore("invoice", {
     setItemCategory(itemId: string, category: string | null) {
       const item = this.task?.items.find((row) => row.id === itemId);
       if (!item) return;
-      item.category = this.normalizeNullableText(category);
+      item.category = this.sanitizeCategoryText(category);
       this.localEdits[itemId] = {
         invoice_date: item.invoice_date ?? null,
         amount: item.amount ?? null,
@@ -220,7 +230,7 @@ export const useInvoiceStore = defineStore("invoice", {
       try {
         const selection = this.selectionSnapshot();
         for (const itemId of targetIds) {
-          const nextTask = await recognizeTask(this.task.id, [itemId]);
+          const nextTask = await recognizeTask(this.task.id, [itemId], this.sessionApiKey || undefined);
           this.applyTask(nextTask, selection);
           this.recomputePreviewLocally();
           this.recognizeDone += 1;

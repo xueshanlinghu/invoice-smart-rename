@@ -20,10 +20,15 @@ export async function importPaths(paths: string[]): Promise<TaskState> {
   return data;
 }
 
-export async function recognizeTask(taskId: string, itemIds?: string[]): Promise<TaskState> {
+export async function recognizeTask(
+  taskId: string,
+  itemIds?: string[],
+  sessionApiKey?: string,
+): Promise<TaskState> {
   const { data } = await api.post<TaskState>("/api/recognize", {
     task_id: taskId,
     item_ids: itemIds,
+    session_api_key: sessionApiKey || undefined,
   });
   return data;
 }

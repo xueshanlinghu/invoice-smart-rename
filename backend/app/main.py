@@ -65,10 +65,11 @@ def _to_settings_response(data: dict) -> SettingsResponse:
     )
 
 
-def _new_pipeline(settings_data: dict) -> OcrPipeline:
+def _new_pipeline(settings_data: dict, *, api_key_override: str | None = None) -> OcrPipeline:
+    api_key = (api_key_override or "").strip() or str(settings_data["siliconflow_api_key"])
     return OcrPipeline(
         base_url=str(settings_data["siliconflow_base_url"]),
-        api_key=str(settings_data["siliconflow_api_key"]),
+        api_key=api_key,
         model=str(settings_data["siliconflow_model"]),
     )
 
@@ -157,7 +158,7 @@ def recognize_items(request: RecognizeRequest) -> TaskState:
     target_ids = set(request.item_ids or [item.id for item in task.items])
     settings_data = _load_settings()
     mapping = dict(settings_data["category_mapping"])
-    pipeline = _new_pipeline(settings_data)
+    pipeline = _new_pipeline(settings_data, api_key_override=request.session_api_key)
 
     for item in task.items:
         if item.id not in target_ids:

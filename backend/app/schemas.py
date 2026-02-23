@@ -75,6 +75,7 @@ class ImportRequest(BaseModel):
 class RecognizeRequest(BaseModel):
     task_id: str
     item_ids: list[str] | None = None
+    session_api_key: str | None = None
 
 
 class PreviewRequest(BaseModel):
