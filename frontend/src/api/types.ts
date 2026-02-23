@@ -25,8 +25,6 @@ export interface InvoiceItem {
   amount: string | null;
   category: string | null;
   vendor_name: string | null;
-  fields_confidence: Record<string, number>;
-  overall_confidence: number;
   extracted_text: string | null;
   status: InvoiceStatus;
   failure_reason: string | null;

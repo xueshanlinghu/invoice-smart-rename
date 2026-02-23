@@ -4,12 +4,12 @@ import {
   NButton,
   NCheckbox,
   NConfigProvider,
+  NDatePicker,
   NEmpty,
   NInput,
   NInputNumber,
   NMessageProvider,
   NModal,
-  NPopconfirm,
   NSelect,
   NSpace,
   NSpin,
@@ -18,7 +18,7 @@ import {
   NTag,
 } from "naive-ui";
 import { useInvoiceStore } from "./stores/invoice";
-import { isTauriRuntime, pickFilesFromSystem, pickFolderFromSystem } from "./api/tauri";
+import { isTauriRuntime } from "./api/tauri";
 import type { InvoiceItem } from "./api/types";
 
 const store = useInvoiceStore();
@@ -36,6 +36,9 @@ const mappingSaving = ref(false);
 const mappingSaveHint = ref("");
 const showDeleteConfirm = ref(false);
 const pendingDeleteRowId = ref<string | null>(null);
+const showRenameConfirm = ref(false);
+const showClearConfirm = ref(false);
+const amountDraftMap = ref<Record<string, number | null>>({});
 const dragging = ref(false);
 let unlistenTauriDrop: null | (() => void) = null;
 let mappingSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -48,10 +51,25 @@ const summaryText = computed(() => {
 });
 
 const selectedCount = computed(() => store.selectedIds.length);
+const hasSelection = computed(() => selectedCount.value > 0);
+const selectedItems = computed(() => (store.task?.items ?? []).filter((item) => item.selected));
+const hasSelectedEmptyNewName = computed(() =>
+  selectedItems.value.some((item) => !(item.suggested_name ?? "").trim()),
+);
+const renameDisabledReason = computed(() => {
+  if (!store.hasTask) return "";
+  if (!hasSelection.value) return "请先勾选要改名的发票";
+  if (hasSelectedEmptyNewName.value) return "选中项存在新文件名为空，请先识别后再改名";
+  return "";
+});
+const canExecuteRename = computed(
+  () => store.hasTask && hasSelection.value && !hasSelectedEmptyNewName.value && !store.loading,
+);
 const modelOptions = computed(() =>
   (store.settings?.siliconflow_models ?? []).map((item) => ({ label: item, value: item })),
 );
 const apiKeyConfigured = computed(() => Boolean(store.settings?.api_key_configured));
+const statusBarText = computed(() => store.message || "就绪");
 
 onMounted(async () => {
   await store.loadSettings();
@@ -65,6 +83,13 @@ watch(
     syncSettingsToForm();
   },
   { deep: true },
+);
+
+watch(
+  () => store.task?.id,
+  () => {
+    amountDraftMap.value = {};
+  },
 );
 
 function syncSettingsToForm() {
@@ -228,20 +253,82 @@ function confirmRemoveMappingRow() {
   pendingDeleteRowId.value = null;
 }
 
-async function importFromPicker(kind: "file" | "folder") {
-  const paths = kind === "file" ? await pickFilesFromSystem() : await pickFolderFromSystem();
-  if (!paths.length) return;
-  await importByPaths(paths);
-}
-
-async function importByPaths(paths: string[]) {
-  const unique = Array.from(new Set(paths.map((item) => item.trim()).filter(Boolean)));
-  if (!unique.length) return;
-  await store.importByPaths(unique);
-}
-
 async function onEditItem(item: InvoiceItem, key: keyof InvoiceItem, value: unknown) {
   await store.patchItem(item.id, { [key]: value } as Partial<InvoiceItem>);
+}
+
+function normalizeDateValue(raw: string | number | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  const digits = String(raw).replace(/\D+/g, "");
+  if (digits.length !== 8) return null;
+  return digits;
+}
+
+function datePickerValue(raw: string | null): string | null {
+  return normalizeDateValue(raw);
+}
+
+async function onDateUpdate(item: InvoiceItem, value: string | null) {
+  const normalized = normalizeDateValue(value);
+  await onEditItem(item, "invoice_date", normalized);
+}
+
+async function onCategoryBlur(item: InvoiceItem, event: Event) {
+  const value = (event.target as HTMLInputElement).value.trim();
+  await onEditItem(item, "category", value || null);
+}
+
+function parseAmountNumber(raw: string | null): number | null {
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function hasFraction(raw: string | null): boolean {
+  if (!raw) return false;
+  return /\.\d*[1-9]\d*$/.test(raw);
+}
+
+function amountStep(raw: string | null): number {
+  return hasFraction(raw) ? 0.01 : 1;
+}
+
+function amountPrecision(raw: string | null): number {
+  return hasFraction(raw) ? 2 : 0;
+}
+
+function formatAmountForPatch(nextValue: number | null, previousRaw: string | null): string | null {
+  if (nextValue === null || !Number.isFinite(nextValue)) {
+    return null;
+  }
+
+  if (hasFraction(previousRaw)) {
+    return Number(nextValue).toFixed(2);
+  }
+  return String(Math.round(nextValue));
+}
+
+function amountEditorValue(item: InvoiceItem): number | null {
+  if (Object.prototype.hasOwnProperty.call(amountDraftMap.value, item.id)) {
+    return amountDraftMap.value[item.id] ?? null;
+  }
+  return parseAmountNumber(item.amount);
+}
+
+function onAmountDraftChange(item: InvoiceItem, value: number | null) {
+  amountDraftMap.value[item.id] = value;
+}
+
+async function onAmountBlur(item: InvoiceItem) {
+  const draft = Object.prototype.hasOwnProperty.call(amountDraftMap.value, item.id)
+    ? amountDraftMap.value[item.id]
+    : parseAmountNumber(item.amount);
+  const next = formatAmountForPatch(draft ?? null, item.amount);
+  delete amountDraftMap.value[item.id];
+  if ((next ?? null) === (item.amount ?? null)) {
+    return;
+  }
+  await onEditItem(item, "amount", next);
 }
 
 function statusType(item: InvoiceItem): "success" | "warning" | "error" | "default" {
@@ -262,7 +349,6 @@ function failureReasonLabel(item: InvoiceItem): string {
   if (!item.failure_reason) return "";
   if (item.failure_reason === "api_key_not_configured") return "未配置硅基流动 API Key";
   if (item.failure_reason === "missing_required_fields") return "缺少关键字段";
-  if (item.failure_reason === "low_confidence") return "置信度偏低";
   if (item.failure_reason === "cloud_request_failed") return "云端识别请求失败";
   if (item.failure_reason === "file_not_found") return "文件不存在";
   return item.failure_reason;
@@ -344,12 +430,18 @@ function onDragLeave(event: DragEvent) {
   }
 }
 
+async function importByPaths(paths: string[]) {
+  const unique = Array.from(new Set(paths.map((item) => item.trim()).filter(Boolean)));
+  if (!unique.length) return;
+  await store.importByPaths(unique);
+}
+
 async function onDrop(event: DragEvent) {
   event.preventDefault();
   dragging.value = false;
   const paths = extractPathsFromDrop(event);
   if (!paths.length) {
-    store.message = "未获取到有效路径，请使用“选择文件/文件夹”";
+    store.message = "未获取到有效路径，请直接拖入文件或文件夹";
     return;
   }
   await importByPaths(paths);
@@ -391,6 +483,36 @@ async function bindTauriDropEvents() {
   }
 }
 
+function openRenameConfirm() {
+  if (!canExecuteRename.value) {
+    store.message = renameDisabledReason.value || "当前不可执行改名";
+    return;
+  }
+  showRenameConfirm.value = true;
+}
+
+function cancelRenameConfirm() {
+  showRenameConfirm.value = false;
+}
+
+async function confirmExecuteRename() {
+  showRenameConfirm.value = false;
+  await store.executeRename();
+}
+
+function openClearConfirm() {
+  showClearConfirm.value = true;
+}
+
+function cancelClearConfirm() {
+  showClearConfirm.value = false;
+}
+
+async function confirmClearList() {
+  showClearConfirm.value = false;
+  await store.clearTaskItems();
+}
+
 onUnmounted(() => {
   if (mappingSaveTimer) {
     clearTimeout(mappingSaveTimer);
@@ -426,29 +548,38 @@ watch(
                 @drop="onDrop"
               >
                 <div class="drop-title">拖拽发票到此处，直接导入并进入列表</div>
-                <div class="drop-tip">支持 PDF / PNG / JPG，可拖多个文件或整个文件夹</div>
+                <div class="drop-tip">仅支持拖拽导入，可拖多个文件或整个文件夹（PDF / PNG / JPG）</div>
               </div>
 
               <div class="toolbar">
                 <n-space>
-                  <n-button :disabled="!isTauriRuntime()" @click="importFromPicker('file')">
-                    选择文件
+                  <n-button
+                    type="primary"
+                    :disabled="!store.hasTask || !hasSelection"
+                    :loading="store.loading"
+                    @click="store.recognize(store.selectedIds)"
+                  >
+                    识别选中发票
                   </n-button>
-                  <n-button :disabled="!isTauriRuntime()" @click="importFromPicker('folder')">
-                    选择文件夹
+                  <n-button
+                    :disabled="!store.hasTask || !hasSelection || store.loading"
+                    @click="store.removeSelectedItemsFromList()"
+                  >
+                    移除选中
                   </n-button>
-                  <n-button type="primary" :disabled="!store.hasTask" :loading="store.loading" @click="store.recognize()">
-                    识别全部
+                  <n-button
+                    :disabled="!store.hasTask || !store.task?.items.length || store.loading"
+                    @click="openClearConfirm"
+                  >
+                    清空列表
                   </n-button>
-                  <n-button :disabled="!store.hasTask" @click="store.preview(filenameTemplate)">
-                    生成命名预览
+                  <n-button
+                    type="warning"
+                    :disabled="!canExecuteRename"
+                    @click="openRenameConfirm"
+                  >
+                    执行改名
                   </n-button>
-                  <n-popconfirm positive-text="确认" negative-text="取消" @positive-click="store.executeRename()">
-                    <template #trigger>
-                      <n-button type="warning" :disabled="!store.hasTask || store.loading">执行改名</n-button>
-                    </template>
-                    确认执行改名？
-                  </n-popconfirm>
                 </n-space>
                 <n-space>
                   <n-button size="small" @click="store.toggleSelectAll(allSelectedNext())">
@@ -457,12 +588,13 @@ watch(
                   <n-tag round>{{ selectedCount }} 已选</n-tag>
                 </n-space>
               </div>
-
-              <p class="tip">{{ summaryText }}</p>
-              <p v-if="store.message" class="message">{{ store.message }}</p>
+              <p v-if="hasSelection && hasSelectedEmptyNewName" class="tip">
+                {{ renameDisabledReason }}
+              </p>
 
               <div class="table-head">
                 <h2>识别列表</h2>
+                <span class="tip">{{ summaryText }}</span>
               </div>
 
               <n-spin :show="store.loading" class="list-spin">
@@ -471,17 +603,26 @@ watch(
                 </div>
                 <div v-else class="table-wrap compact-table">
                   <table>
+                    <colgroup>
+                      <col class="col-select" />
+                      <col class="col-status" />
+                      <col class="col-old-name" />
+                      <col class="col-item-name" />
+                      <col class="col-date" />
+                      <col class="col-category" />
+                      <col class="col-amount" />
+                      <col class="col-new-name" />
+                    </colgroup>
                     <thead>
                       <tr>
                         <th>选中</th>
                         <th>状态</th>
                         <th>原文件名</th>
-                        <th>开票日期</th>
                         <th>项目名称</th>
+                        <th>开票日期</th>
                         <th>类别</th>
                         <th>金额</th>
-                        <th>置信度</th>
-                        <th>建议文件名</th>
+                        <th>新文件名</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -489,7 +630,7 @@ watch(
                         <td>
                           <n-checkbox
                             :checked="item.selected"
-                            @update:checked="(v) => onEditItem(item, 'selected', v)"
+                            @update:checked="(v) => store.setItemSelected(item.id, Boolean(v))"
                           />
                         </td>
                         <td>
@@ -499,22 +640,20 @@ watch(
                           </div>
                         </td>
                         <td>
-                          <div class="old-name">{{ item.old_name }}</div>
+                          <div class="old-name" :title="item.old_name">{{ item.old_name }}</div>
                         </td>
                         <td>
-                          <n-input
-                            :value="item.invoice_date ?? ''"
-                            size="small"
-                            placeholder="YYYY-MM-DD"
-                            @blur="(e) => onEditItem(item, 'invoice_date', (e.target as HTMLInputElement).value || null)"
-                          />
+                          <n-input :value="item.item_name ?? ''" size="small" readonly placeholder="项目名称" />
                         </td>
                         <td>
-                          <n-input
-                            :value="item.item_name ?? ''"
+                          <n-date-picker
+                            type="date"
+                            clearable
                             size="small"
-                            placeholder="项目名称"
-                            @blur="(e) => onEditItem(item, 'item_name', (e.target as HTMLInputElement).value || null)"
+                            value-format="yyyyMMdd"
+                            :formatted-value="datePickerValue(item.invoice_date)"
+                            placeholder="YYYYMMDD"
+                            @update:formatted-value="(v) => onDateUpdate(item, v)"
                           />
                         </td>
                         <td>
@@ -522,26 +661,22 @@ watch(
                             :value="item.category ?? ''"
                             size="small"
                             placeholder="类别"
-                            @blur="(e) => onEditItem(item, 'category', (e.target as HTMLInputElement).value || null)"
+                            @blur="(e) => onCategoryBlur(item, e)"
                           />
                         </td>
                         <td>
                           <n-input-number
-                            :value="item.amount ? Number(item.amount) : null"
+                            :value="amountEditorValue(item)"
                             size="small"
-                            :precision="2"
+                            :precision="amountPrecision(item.amount)"
+                            :step="amountStep(item.amount)"
                             :min="0"
-                            @update:value="(v) => onEditItem(item, 'amount', v !== null ? Number(v).toFixed(2) : null)"
+                            @update:value="(v) => onAmountDraftChange(item, v)"
+                            @blur="() => onAmountBlur(item)"
                           />
                         </td>
-                        <td>{{ (item.overall_confidence * 100).toFixed(1) }}%</td>
                         <td>
-                          <n-input
-                            :value="item.manual_name ?? item.suggested_name ?? ''"
-                            size="small"
-                            placeholder="可手工修改文件名"
-                            @blur="(e) => onEditItem(item, 'manual_name', (e.target as HTMLInputElement).value || null)"
-                          />
+                          <div class="new-name" :title="item.suggested_name ?? ''">{{ item.suggested_name ?? "-" }}</div>
                         </td>
                       </tr>
                     </tbody>
@@ -619,6 +754,11 @@ watch(
           </n-tab-pane>
         </n-tabs>
 
+        <div class="status-bar">
+          <span class="status-main">{{ statusBarText }}</span>
+          <span class="status-summary">{{ summaryText }}</span>
+        </div>
+
         <n-modal
           v-model:show="showDeleteConfirm"
           preset="dialog"
@@ -630,6 +770,32 @@ watch(
           @after-leave="cancelRemoveMappingRow"
         >
           确认删除这条映射？
+        </n-modal>
+
+        <n-modal
+          v-model:show="showRenameConfirm"
+          preset="dialog"
+          title="确认改名"
+          positive-text="确认执行"
+          negative-text="取消"
+          @positive-click="confirmExecuteRename"
+          @negative-click="cancelRenameConfirm"
+          @after-leave="cancelRenameConfirm"
+        >
+          将对已选中的发票执行改名操作，是否继续？
+        </n-modal>
+
+        <n-modal
+          v-model:show="showClearConfirm"
+          preset="dialog"
+          title="清空确认"
+          positive-text="确认清空"
+          negative-text="取消"
+          @positive-click="confirmClearList"
+          @negative-click="cancelClearConfirm"
+          @after-leave="cancelClearConfirm"
+        >
+          仅清空当前列表，不会删除实际文件。确认继续？
         </n-modal>
       </div>
     </n-message-provider>

@@ -41,9 +41,6 @@ class InvoiceItem(BaseModel):
     category: str | None = None
     vendor_name: str | None = None
 
-    fields_confidence: dict[str, float] = Field(default_factory=dict)
-    overall_confidence: float = 0.0
-
     extracted_text: str | None = None
 
     status: InvoiceStatus = "pending"
@@ -84,6 +81,15 @@ class PreviewRequest(BaseModel):
     task_id: str
     template: str | None = None
     item_ids: list[str] | None = None
+
+
+class RemoveItemsRequest(BaseModel):
+    task_id: str
+    item_ids: list[str]
+
+
+class ClearItemsRequest(BaseModel):
+    task_id: str
 
 
 class CommitPlanRequest(BaseModel):

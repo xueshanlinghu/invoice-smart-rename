@@ -5,6 +5,7 @@ import mimetypes
 import re
 from datetime import datetime
 import io
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,7 @@ def _normalize_date(raw: Any) -> str | None:
         dt = datetime(int(year), int(month), int(day))
     except ValueError:
         return None
-    return dt.strftime("%Y-%m-%d")
+    return dt.strftime("%Y%m%d")
 
 
 def _normalize_amount(raw: Any) -> str | None:
@@ -49,16 +50,18 @@ def _normalize_amount(raw: Any) -> str | None:
     if not text:
         return None
     if not AMOUNT_PATTERN.match(text):
-        try:
-            value = float(text)
-        except ValueError:
-            return None
-        return f"{value:.2f}"
-    try:
-        value = float(text)
-    except ValueError:
         return None
-    return f"{value:.2f}"
+    try:
+        value = Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
+
+    quantized = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if quantized == quantized.to_integral_value():
+        return str(int(quantized))
+
+    normalized = format(quantized, "f").rstrip("0").rstrip(".")
+    return normalized
 
 
 def _normalize_item_name(raw: Any) -> str | None:
@@ -179,16 +182,8 @@ class SiliconFlowClient:
         invoice_date = _normalize_date(parsed.get("invoice_date"))
         item_name = _normalize_item_name(parsed.get("item_name"))
         amount = _normalize_amount(parsed.get("amount"))
-        confidence_raw = parsed.get("confidence")
-        try:
-            confidence = float(confidence_raw) if confidence_raw is not None else 0.9
-        except (TypeError, ValueError):
-            confidence = 0.9
-        confidence = min(1.0, max(0.0, confidence))
-
         return {
             "invoice_date": invoice_date,
             "item_name": item_name,
             "amount": amount,
-            "confidence": confidence,
         }

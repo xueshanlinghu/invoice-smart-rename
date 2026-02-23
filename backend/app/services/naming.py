@@ -24,6 +24,9 @@ class NamingTokens:
 def _format_date(date_value: str | None) -> str:
     if not date_value:
         return "19700101"
+    digits = re.sub(r"\D+", "", date_value)
+    if len(digits) == 8:
+        return digits
     return date_value.replace("-", "")
 
 
@@ -34,7 +37,10 @@ def _format_amount(amount: str | None) -> str:
         decimal_value = Decimal(amount)
     except InvalidOperation:
         return "0.00元"
-    return format_amount_to_yuan(decimal_value)
+    if decimal_value == decimal_value.to_integral_value():
+        return f"{int(decimal_value)}元"
+    formatted = format_amount_to_yuan(decimal_value)
+    return formatted.replace(".00元", "元")
 
 
 def _render_template(template: str, tokens: NamingTokens) -> str:

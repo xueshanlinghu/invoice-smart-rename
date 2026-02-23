@@ -50,6 +50,21 @@ export async function patchItem(
   return data;
 }
 
+export async function removeItems(taskId: string, itemIds: string[]): Promise<TaskState> {
+  const { data } = await api.post<TaskState>("/api/remove-items", {
+    task_id: taskId,
+    item_ids: itemIds,
+  });
+  return data;
+}
+
+export async function clearItems(taskId: string): Promise<TaskState> {
+  const { data } = await api.post<TaskState>("/api/clear-items", {
+    task_id: taskId,
+  });
+  return data;
+}
+
 export async function getSettings(): Promise<AppSettings> {
   const { data } = await api.get<AppSettings>("/api/settings");
   return data;

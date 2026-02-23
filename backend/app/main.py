@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.schemas import (
+    ClearItemsRequest,
     CommitPlanRequest,
     CommitPlanResponse,
     CommitResultsSyncRequest,
@@ -18,6 +19,7 @@ from app.schemas import (
     InvoicePatchRequest,
     PreviewRequest,
     RecognizeRequest,
+    RemoveItemsRequest,
     SettingsResponse,
     SettingsUpdateRequest,
     TaskState,
@@ -246,6 +248,30 @@ def patch_item(task_id: str, item_id: str, request: InvoicePatchRequest) -> Task
     for key, value in patch.items():
         setattr(item, key, value)
     item.updated_at = _utcnow()
+    preview_related_fields = {"invoice_date", "category", "amount", "manual_name", "item_name", "status"}
+    if any(field in patch for field in preview_related_fields):
+        apply_name_preview(task.items, template=task.template)
+    return _save_task(task)
+
+
+@app.post("/api/remove-items", response_model=TaskState)
+def remove_items(request: RemoveItemsRequest) -> TaskState:
+    task = _must_task(request.task_id)
+    if not request.item_ids:
+        return _save_task(task)
+
+    target_ids = set(request.item_ids)
+    task.items = [item for item in task.items if item.id not in target_ids]
+    apply_name_preview(task.items, template=task.template)
+    for item in task.items:
+        item.updated_at = _utcnow()
+    return _save_task(task)
+
+
+@app.post("/api/clear-items", response_model=TaskState)
+def clear_items(request: ClearItemsRequest) -> TaskState:
+    task = _must_task(request.task_id)
+    task.items = []
     return _save_task(task)
 
 

@@ -18,7 +18,7 @@ body {
 .page-shell {
   width: 100%;
   margin: 0;
-  padding: clamp(10px, 1.3vw, 18px);
+  padding: clamp(10px, 1.2vw, 18px);
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -49,7 +49,7 @@ body {
 .work-panel {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 110px);
+  height: calc(100vh - 148px);
   min-height: 0;
   gap: 10px;
 }
@@ -101,6 +101,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
 }
 
 .empty-wrap {
@@ -123,34 +124,70 @@ body {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: clamp(1320px, 76vw, 1840px);
-  table-layout: auto;
+  min-width: 1120px;
+  table-layout: fixed;
+}
+
+.col-select {
+  width: 62px;
+}
+
+.col-status {
+  width: 96px;
+}
+
+.col-old-name {
+  width: 230px;
+}
+
+.col-item-name {
+  width: 250px;
+}
+
+.col-date {
+  width: 140px;
+}
+
+.col-category {
+  width: 120px;
+}
+
+.col-amount {
+  width: 120px;
+}
+
+.col-new-name {
+  width: 220px;
 }
 
 th,
 td {
   border-bottom: 1px solid rgba(48, 92, 89, 0.12);
-  padding: 9px 8px;
+  padding: 8px 8px;
   text-align: left;
   vertical-align: middle;
-  white-space: nowrap;
 }
 
 th {
   color: #20464e;
   font-size: 13px;
   background: rgba(211, 234, 231, 0.4);
+  white-space: nowrap;
 }
 
 tbody tr:hover {
   background: rgba(210, 235, 241, 0.24);
 }
 
-.old-name {
-  max-width: 350px;
+.old-name,
+.new-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.new-name {
+  color: #1f4d53;
 }
 
 .row-tip {
@@ -158,10 +195,12 @@ tbody tr:hover {
   font-size: 11px;
   color: #8b5b4b;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .settings-panel {
-  height: calc(100vh - 110px);
+  height: calc(100vh - 148px);
   overflow: auto;
 }
 
@@ -241,12 +280,6 @@ tbody tr:hover {
   color: #52707a;
 }
 
-.message {
-  margin: 7px 0 0;
-  color: #1a6771;
-  font-weight: 600;
-}
-
 .page-shell .n-button {
   border-radius: 14px;
   box-shadow: 0 3px 10px rgba(40, 92, 88, 0.12);
@@ -257,6 +290,33 @@ tbody tr:hover {
   border-radius: 11px;
 }
 
+.status-bar {
+  flex: 0 0 auto;
+  min-height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(45, 96, 92, 0.14);
+  background: rgba(255, 255, 255, 0.65);
+  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: #2e5c65;
+}
+
+.status-main {
+  font-weight: 600;
+  color: #145f67;
+}
+
+.status-summary {
+  color: #5b7880;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 @media (max-width: 980px) {
   body {
     overflow: auto;
@@ -264,6 +324,7 @@ tbody tr:hover {
 
   .page-shell {
     height: auto;
+    min-height: 100vh;
     padding: 12px;
   }
 
@@ -286,14 +347,28 @@ tbody tr:hover {
     grid-template-columns: 1fr;
     gap: 8px;
   }
+
+  .status-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 @media (min-width: 1700px) {
-  .work-panel {
-    height: calc(100vh - 118px);
+  .work-panel,
+  .settings-panel {
+    height: calc(100vh - 156px);
   }
 
-  .old-name {
-    max-width: 420px;
+  .col-old-name {
+    width: 260px;
+  }
+
+  .col-item-name {
+    width: 280px;
+  }
+
+  .col-new-name {
+    width: 260px;
   }
 }
