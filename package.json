@@ -6,7 +6,7 @@
     "dev:api": "uv run --project backend python backend/run_dev.py",
     "dev:web": "vite --config frontend/vite.config.ts",
     "build:web": "vue-tsc -b frontend/tsconfig.json && vite build --config frontend/vite.config.ts",
-    "tauri:dev": "node scripts/tauri-dev.mjs",
+    "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },
   "dependencies": {
