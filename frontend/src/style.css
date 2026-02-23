@@ -97,6 +97,17 @@ body {
   min-height: 0;
 }
 
+.list-spin .n-spin-container,
+.list-spin .n-spin-content {
+  height: 100%;
+  min-height: 0;
+}
+
+.list-spin .n-spin-content {
+  display: flex;
+  flex-direction: column;
+}
+
 .table-head {
   display: flex;
   justify-content: space-between;
@@ -112,13 +123,16 @@ body {
   overflow-x: auto;
   overflow-y: auto;
   height: 100%;
+  min-height: 0;
   border: 1px solid rgba(54, 98, 95, 0.15);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.7);
 }
 
 .compact-table {
+  flex: 1;
   min-height: 0;
+  height: auto;
 }
 
 table {
@@ -171,8 +185,14 @@ td {
 th {
   color: #20464e;
   font-size: 13px;
-  background: rgba(211, 234, 231, 0.4);
+  background: #d3eae7;
   white-space: nowrap;
+}
+
+.table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 tbody tr:hover {

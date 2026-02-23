@@ -320,31 +320,42 @@ function parseAmountNumber(raw: string | null): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+function amountDecimals(raw: string | null): number {
+  if (!raw) return 0;
+  const matched = raw.match(/\.(\d+)/);
+  if (!matched) return 0;
+  const trimmed = matched[1].replace(/0+$/g, "");
+  return Math.min(2, trimmed.length);
+}
+
 function hasFraction(raw: string | null): boolean {
-  if (!raw) return false;
-  return /\.\d*[1-9]\d*$/.test(raw);
+  return amountDecimals(raw) > 0;
 }
 
 function amountStep(raw: string | null): number {
-  return hasFraction(raw) ? 0.01 : 1;
+  const decimals = amountDecimals(raw);
+  if (decimals >= 2) return 0.01;
+  if (decimals === 1) return 0.1;
+  return 1;
 }
 
 function amountPrecision(raw: string | null): number {
-  return hasFraction(raw) ? 2 : 0;
+  return amountDecimals(raw);
 }
 
 function formatAmountForLocal(nextValue: number | null, previousRaw: string | null): string | null {
   if (nextValue === null || !Number.isFinite(nextValue)) {
     return null;
   }
+  const normalized = Number(nextValue).toFixed(2).replace(/0+$/g, "").replace(/\.$/, "");
+  if (!normalized) return "0";
   if (hasFraction(previousRaw)) {
-    return Number(nextValue).toFixed(2);
+    return normalized;
   }
   if (Number.isInteger(nextValue)) {
     return String(Math.trunc(nextValue));
   }
-  const text = Number(nextValue).toFixed(2).replace(/0+$/g, "").replace(/\.$/, "");
-  return text;
+  return normalized;
 }
 
 function amountEditorValue(item: InvoiceItem): number | null {

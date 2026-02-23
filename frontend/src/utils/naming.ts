@@ -35,13 +35,11 @@ function formatDate(dateValue: string | null): string {
 }
 
 function formatAmount(amount: string | null): string {
-  if (!amount) return "0.00元";
+  if (!amount) return "0元";
   const value = Number(amount);
-  if (!Number.isFinite(value)) return "0.00元";
-  if (Number.isInteger(value)) return `${Math.trunc(value)}元`;
-  const fixed = value.toFixed(2);
-  if (fixed.endsWith(".00")) return `${Math.trunc(value)}元`;
-  return `${fixed}元`;
+  if (!Number.isFinite(value)) return "0元";
+  const normalized = value.toFixed(2).replace(/0+$/g, "").replace(/\.$/, "");
+  return `${normalized || "0"}元`;
 }
 
 function renderTemplate(
@@ -91,7 +89,7 @@ export function applyNamePreviewLocal(items: InvoiceItem[], template: string): v
     const rendered = renderTemplate(template, {
       date: formatDate(item.invoice_date),
       category: sanitizeComponent(category, "其他"),
-      amount: sanitizeComponent(formatAmount(item.amount), "0.00元"),
+      amount: sanitizeComponent(formatAmount(item.amount), "0元"),
       ext,
     });
 
@@ -100,4 +98,3 @@ export function applyNamePreviewLocal(items: InvoiceItem[], template: string): v
     item.action = "rename";
   }
 }
-
