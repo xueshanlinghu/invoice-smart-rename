@@ -138,6 +138,18 @@ class CommitResultsSyncRequest(BaseModel):
     results: list[CommitRenameItemResult]
 
 
+class InvoiceSyncPatch(BaseModel):
+    item_id: str
+    invoice_date: str | None = None
+    amount: str | None = None
+    category: str | None = None
+
+
+class SyncItemsRequest(BaseModel):
+    task_id: str
+    items: list[InvoiceSyncPatch]
+
+
 class InvoicePatchRequest(BaseModel):
     invoice_date: str | None = None
     item_name: str | None = None

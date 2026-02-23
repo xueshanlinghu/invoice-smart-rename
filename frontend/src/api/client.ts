@@ -4,6 +4,7 @@ import type {
   AppSettingsUpdate,
   CommitPlanResponse,
   CommitRenameResponse,
+  SyncItemPatch,
   TaskState,
 } from "./types";
 
@@ -99,6 +100,14 @@ export async function syncCommitResults(
   const { data } = await api.post<CommitRenameResponse>("/api/commit-results", {
     task_id: taskId,
     results,
+  });
+  return data;
+}
+
+export async function syncItems(taskId: string, items: SyncItemPatch[]): Promise<TaskState> {
+  const { data } = await api.post<TaskState>("/api/sync-items", {
+    task_id: taskId,
+    items,
   });
   return data;
 }

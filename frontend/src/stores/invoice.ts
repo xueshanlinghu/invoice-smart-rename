@@ -6,11 +6,10 @@ import {
   fetchTask,
   getSettings,
   importPaths,
-  patchItem,
-  previewNames,
   recognizeTask,
   removeItems,
   syncCommitResults,
+  syncItems,
   updateSettings,
 } from "../api/client";
 import { isTauriRuntime, renameByTauri } from "../api/tauri";
@@ -20,8 +19,10 @@ import type {
   CommitPlanResponse,
   CommitRenameResponse,
   InvoiceItem,
+  SyncItemPatch,
   TaskState,
 } from "../api/types";
+import { applyNamePreviewLocal } from "../utils/naming";
 
 interface InvoiceState {
   task: TaskState | null;
@@ -30,7 +31,13 @@ interface InvoiceState {
   settings: AppSettings | null;
   lastPlan: CommitPlanResponse | null;
   lastRename: CommitRenameResponse | null;
+  isRecognizing: boolean;
+  recognizeTotal: number;
+  recognizeDone: number;
+  localEdits: Record<string, { invoice_date: string | null; amount: string | null; category: string | null }>;
 }
+
+const DEFAULT_TEMPLATE = "{date}-{category}-{amount}";
 
 export const useInvoiceStore = defineStore("invoice", {
   state: (): InvoiceState => ({
@@ -40,6 +47,10 @@ export const useInvoiceStore = defineStore("invoice", {
     settings: null,
     lastPlan: null,
     lastRename: null,
+    isRecognizing: false,
+    recognizeTotal: 0,
+    recognizeDone: 0,
+    localEdits: {},
   }),
   getters: {
     selectedIds(state): string[] {
@@ -47,6 +58,10 @@ export const useInvoiceStore = defineStore("invoice", {
     },
     hasTask(state): boolean {
       return !!state.task?.id;
+    },
+    recognizePercent(state): number {
+      if (!state.recognizeTotal) return 0;
+      return Math.min(100, Math.round((state.recognizeDone / state.recognizeTotal) * 100));
     },
   },
   actions: {
@@ -65,7 +80,33 @@ export const useInvoiceStore = defineStore("invoice", {
           }
         }
       }
+      for (const item of nextTask.items) {
+        const localEdit = this.localEdits[item.id];
+        if (!localEdit) continue;
+        item.invoice_date = localEdit.invoice_date;
+        item.amount = localEdit.amount;
+        item.category = localEdit.category;
+      }
+      const aliveItemIds = new Set(nextTask.items.map((item) => item.id));
+      for (const itemId of Object.keys(this.localEdits)) {
+        if (!aliveItemIds.has(itemId)) {
+          delete this.localEdits[itemId];
+        }
+      }
       this.task = nextTask;
+    },
+    currentTemplate(): string {
+      return this.task?.template || this.settings?.filename_template || DEFAULT_TEMPLATE;
+    },
+    recomputePreviewLocally(template?: string) {
+      if (!this.task) return;
+      const appliedTemplate = template || this.currentTemplate();
+      this.task.template = appliedTemplate;
+      applyNamePreviewLocal(this.task.items, appliedTemplate);
+    },
+    normalizeNullableText(value: string | null | undefined): string | null {
+      const text = (value ?? "").trim();
+      return text || null;
     },
     handleError(error: unknown) {
       const maybeAxios = error as { response?: { data?: { detail?: string } }; message?: string };
@@ -93,14 +134,17 @@ export const useInvoiceStore = defineStore("invoice", {
     },
     async saveTemplate(template: string) {
       await this.saveSettings({ filename_template: template });
+      this.recomputePreviewLocally(template);
       this.message = "命名模板已保存";
     },
     async importByPaths(paths: string[]) {
       this.loading = true;
       try {
         this.task = await importPaths(paths);
+        this.localEdits = {};
         this.lastPlan = null;
         this.lastRename = null;
+        this.recomputePreviewLocally();
         this.message = `已导入 ${this.task.summary.total} 个文件`;
       } catch (error) {
         this.handleError(error);
@@ -114,54 +158,7 @@ export const useInvoiceStore = defineStore("invoice", {
       try {
         const nextTask = await fetchTask(this.task.id);
         this.applyTask(nextTask, selection);
-      } catch (error) {
-        this.handleError(error);
-      }
-    },
-    async recognize(itemIds?: string[]) {
-      if (!this.task?.id) return;
-      const targetIds = itemIds ?? this.selectedIds;
-      if (!targetIds.length) {
-        this.message = "请先勾选需要识别的发票";
-        return;
-      }
-      this.loading = true;
-      try {
-        const selection = this.selectionSnapshot();
-        const nextTask = await recognizeTask(this.task.id, targetIds);
-        this.applyTask(nextTask, selection);
-        this.message = "识别完成";
-      } catch (error) {
-        this.handleError(error);
-      } finally {
-        this.loading = false;
-      }
-    },
-    async preview(template?: string) {
-      if (!this.task?.id) return;
-      this.loading = true;
-      try {
-        const appliedTemplate = template || this.settings?.filename_template || this.task.template;
-        const selection = this.selectionSnapshot();
-        const nextTask = await previewNames(this.task.id, appliedTemplate, this.selectedIds);
-        this.applyTask(nextTask, selection);
-        this.message = "命名预览已生成";
-      } catch (error) {
-        this.handleError(error);
-      } finally {
-        this.loading = false;
-      }
-    },
-    async patchItem(itemId: string, patch: Partial<InvoiceItem>) {
-      if (!this.task?.id) return;
-      try {
-        const selection = this.selectionSnapshot();
-        if (Object.prototype.hasOwnProperty.call(patch, "selected")) {
-          selection[itemId] = Boolean(patch.selected);
-        }
-        const nextTask = await patchItem(this.task.id, itemId, patch);
-        this.applyTask(nextTask, selection);
-        this.message = "已更新";
+        this.recomputePreviewLocally();
       } catch (error) {
         this.handleError(error);
       }
@@ -170,6 +167,95 @@ export const useInvoiceStore = defineStore("invoice", {
       const item = this.task?.items.find((row) => row.id === itemId);
       if (!item) return;
       item.selected = nextValue;
+    },
+    setItemInvoiceDate(itemId: string, invoiceDate: string | null) {
+      const item = this.task?.items.find((row) => row.id === itemId);
+      if (!item) return;
+      item.invoice_date = invoiceDate;
+      this.localEdits[itemId] = {
+        invoice_date: item.invoice_date ?? null,
+        amount: item.amount ?? null,
+        category: item.category ?? null,
+      };
+      this.recomputePreviewLocally();
+    },
+    setItemCategory(itemId: string, category: string | null) {
+      const item = this.task?.items.find((row) => row.id === itemId);
+      if (!item) return;
+      item.category = this.normalizeNullableText(category);
+      this.localEdits[itemId] = {
+        invoice_date: item.invoice_date ?? null,
+        amount: item.amount ?? null,
+        category: item.category ?? null,
+      };
+      this.recomputePreviewLocally();
+    },
+    setItemAmount(itemId: string, amount: string | null) {
+      const item = this.task?.items.find((row) => row.id === itemId);
+      if (!item) return;
+      item.amount = this.normalizeNullableText(amount);
+      this.localEdits[itemId] = {
+        invoice_date: item.invoice_date ?? null,
+        amount: item.amount ?? null,
+        category: item.category ?? null,
+      };
+      this.recomputePreviewLocally();
+    },
+    async recognize(itemIds?: string[]) {
+      if (!this.task?.id) return;
+      const targetIds = itemIds ?? this.selectedIds;
+      if (!targetIds.length) {
+        this.message = "请先勾选需要识别的发票";
+        return;
+      }
+
+      this.loading = true;
+      this.isRecognizing = true;
+      this.recognizeTotal = targetIds.length;
+      this.recognizeDone = 0;
+      for (const itemId of targetIds) {
+        delete this.localEdits[itemId];
+      }
+
+      try {
+        const selection = this.selectionSnapshot();
+        for (const itemId of targetIds) {
+          const nextTask = await recognizeTask(this.task.id, [itemId]);
+          this.applyTask(nextTask, selection);
+          this.recomputePreviewLocally();
+          this.recognizeDone += 1;
+        }
+        this.message = `识别完成（${this.recognizeDone}/${this.recognizeTotal}）`;
+      } catch (error) {
+        this.handleError(error);
+      } finally {
+        this.loading = false;
+        this.isRecognizing = false;
+      }
+    },
+    preview(template?: string) {
+      this.recomputePreviewLocally(template);
+      this.message = "命名预览已更新";
+    },
+    async syncEditableItems(silent = false) {
+      if (!this.task?.id) return;
+      const patches: SyncItemPatch[] = Object.entries(this.localEdits).map(([itemId, value]) => ({
+        item_id: itemId,
+        invoice_date: value.invoice_date,
+        amount: value.amount,
+        category: value.category,
+      }));
+      if (!patches.length) return;
+      const selection = this.selectionSnapshot();
+      const nextTask = await syncItems(this.task.id, patches);
+      for (const patch of patches) {
+        delete this.localEdits[patch.item_id];
+      }
+      this.applyTask(nextTask, selection);
+      this.recomputePreviewLocally();
+      if (!silent) {
+        this.message = "已同步编辑内容";
+      }
     },
     async removeSelectedItemsFromList() {
       if (!this.task?.id) return;
@@ -183,6 +269,7 @@ export const useInvoiceStore = defineStore("invoice", {
         const selection = this.selectionSnapshot();
         const nextTask = await removeItems(this.task.id, targetIds);
         this.applyTask(nextTask, selection);
+        this.recomputePreviewLocally();
         this.lastPlan = null;
         this.lastRename = null;
         this.message = `已从列表移除 ${targetIds.length} 项`;
@@ -197,8 +284,11 @@ export const useInvoiceStore = defineStore("invoice", {
       this.loading = true;
       try {
         this.task = await clearItems(this.task.id);
+        this.localEdits = {};
         this.lastPlan = null;
         this.lastRename = null;
+        this.recognizeTotal = 0;
+        this.recognizeDone = 0;
         this.message = "列表已清空";
       } catch (error) {
         this.handleError(error);
@@ -210,6 +300,7 @@ export const useInvoiceStore = defineStore("invoice", {
       if (!this.task?.id) return;
       this.loading = true;
       try {
+        await this.syncEditableItems(true);
         this.lastPlan = await buildCommitPlan(this.task.id, this.selectedIds);
         this.message = `计划生成完成：${this.lastPlan.plan.length} 项`;
       } catch (error) {
@@ -233,6 +324,8 @@ export const useInvoiceStore = defineStore("invoice", {
       this.loading = true;
       try {
         const selection = this.selectionSnapshot();
+        await this.syncEditableItems(true);
+
         if (isTauriRuntime()) {
           this.lastPlan = await buildCommitPlan(this.task.id, this.selectedIds);
           const tauriResults = await renameByTauri(this.lastPlan.plan);
@@ -242,6 +335,7 @@ export const useInvoiceStore = defineStore("invoice", {
         }
         const nextTask = await fetchTask(this.task.id);
         this.applyTask(nextTask, selection);
+        this.recomputePreviewLocally();
         this.message = "改名执行完成";
       } catch (error) {
         this.handleError(error);

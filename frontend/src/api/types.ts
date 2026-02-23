@@ -77,6 +77,13 @@ export interface CommitRenameResponse {
   results: CommitRenameItemResult[];
 }
 
+export interface SyncItemPatch {
+  item_id: string;
+  invoice_date: string | null;
+  amount: string | null;
+  category: string | null;
+}
+
 export interface AppSettings {
   siliconflow_base_url: string;
   siliconflow_model: string;

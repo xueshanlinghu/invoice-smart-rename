@@ -22,6 +22,7 @@ from app.schemas import (
     RemoveItemsRequest,
     SettingsResponse,
     SettingsUpdateRequest,
+    SyncItemsRequest,
     TaskState,
     TaskSummary,
 )
@@ -235,6 +236,26 @@ def commit_results(request: CommitResultsSyncRequest) -> CommitRenameResponse:
 
     _save_task(task)
     return CommitRenameResponse(task_id=task.id, results=request.results)
+
+
+@app.post("/api/sync-items", response_model=TaskState)
+def sync_items(request: SyncItemsRequest) -> TaskState:
+    task = _must_task(request.task_id)
+    if not request.items:
+        return _save_task(task)
+
+    index = _item_index(task)
+    for patch in request.items:
+        item = index.get(patch.item_id)
+        if not item:
+            continue
+        item.invoice_date = patch.invoice_date
+        item.amount = patch.amount
+        item.category = patch.category
+        item.updated_at = _utcnow()
+
+    apply_name_preview(task.items, template=task.template)
+    return _save_task(task)
 
 
 @app.patch("/api/items/{task_id}/{item_id}", response_model=TaskState)

@@ -10,6 +10,7 @@ import {
   NInputNumber,
   NMessageProvider,
   NModal,
+  NProgress,
   NSelect,
   NSpace,
   NSpin,
@@ -38,7 +39,6 @@ const showDeleteConfirm = ref(false);
 const pendingDeleteRowId = ref<string | null>(null);
 const showRenameConfirm = ref(false);
 const showClearConfirm = ref(false);
-const amountDraftMap = ref<Record<string, number | null>>({});
 const dragging = ref(false);
 let unlistenTauriDrop: null | (() => void) = null;
 let mappingSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -70,6 +70,10 @@ const modelOptions = computed(() =>
 );
 const apiKeyConfigured = computed(() => Boolean(store.settings?.api_key_configured));
 const statusBarText = computed(() => store.message || "就绪");
+const recognizeProgressText = computed(() => {
+  if (!store.recognizeTotal) return "";
+  return `识别进度 ${store.recognizeDone}/${store.recognizeTotal}（${store.recognizePercent}%）`;
+});
 
 onMounted(async () => {
   await store.loadSettings();
@@ -83,13 +87,6 @@ watch(
     syncSettingsToForm();
   },
   { deep: true },
-);
-
-watch(
-  () => store.task?.id,
-  () => {
-    amountDraftMap.value = {};
-  },
 );
 
 function syncSettingsToForm() {
@@ -126,12 +123,9 @@ async function onTemplateBlur() {
   templateSaving.value = true;
   try {
     await store.saveTemplate(normalized);
-    if (store.hasTask) {
-      await store.preview(normalized);
-      templateSaveHint.value = `模板已保存并应用：${new Date().toLocaleTimeString()}`;
-    } else {
-      templateSaveHint.value = `模板已保存：${new Date().toLocaleTimeString()}`;
-    }
+    templateSaveHint.value = store.hasTask
+      ? `模板已保存并应用：${new Date().toLocaleTimeString()}`
+      : `模板已保存：${new Date().toLocaleTimeString()}`;
   } catch {
     // error message is handled in store
   } finally {
@@ -253,10 +247,6 @@ function confirmRemoveMappingRow() {
   pendingDeleteRowId.value = null;
 }
 
-async function onEditItem(item: InvoiceItem, key: keyof InvoiceItem, value: unknown) {
-  await store.patchItem(item.id, { [key]: value } as Partial<InvoiceItem>);
-}
-
 function normalizeDateValue(raw: string | number | null | undefined): string | null {
   if (raw === null || raw === undefined) return null;
   const digits = String(raw).replace(/\D+/g, "");
@@ -268,14 +258,13 @@ function datePickerValue(raw: string | null): string | null {
   return normalizeDateValue(raw);
 }
 
-async function onDateUpdate(item: InvoiceItem, value: string | null) {
+function onDateUpdate(item: InvoiceItem, value: string | null) {
   const normalized = normalizeDateValue(value);
-  await onEditItem(item, "invoice_date", normalized);
+  store.setItemInvoiceDate(item.id, normalized);
 }
 
-async function onCategoryBlur(item: InvoiceItem, event: Event) {
-  const value = (event.target as HTMLInputElement).value.trim();
-  await onEditItem(item, "category", value || null);
+function onCategoryUpdate(item: InvoiceItem, value: string) {
+  store.setItemCategory(item.id, value);
 }
 
 function parseAmountNumber(raw: string | null): number | null {
@@ -297,38 +286,27 @@ function amountPrecision(raw: string | null): number {
   return hasFraction(raw) ? 2 : 0;
 }
 
-function formatAmountForPatch(nextValue: number | null, previousRaw: string | null): string | null {
+function formatAmountForLocal(nextValue: number | null, previousRaw: string | null): string | null {
   if (nextValue === null || !Number.isFinite(nextValue)) {
     return null;
   }
-
   if (hasFraction(previousRaw)) {
     return Number(nextValue).toFixed(2);
   }
-  return String(Math.round(nextValue));
+  if (Number.isInteger(nextValue)) {
+    return String(Math.trunc(nextValue));
+  }
+  const text = Number(nextValue).toFixed(2).replace(/0+$/g, "").replace(/\.$/, "");
+  return text;
 }
 
 function amountEditorValue(item: InvoiceItem): number | null {
-  if (Object.prototype.hasOwnProperty.call(amountDraftMap.value, item.id)) {
-    return amountDraftMap.value[item.id] ?? null;
-  }
   return parseAmountNumber(item.amount);
 }
 
-function onAmountDraftChange(item: InvoiceItem, value: number | null) {
-  amountDraftMap.value[item.id] = value;
-}
-
-async function onAmountBlur(item: InvoiceItem) {
-  const draft = Object.prototype.hasOwnProperty.call(amountDraftMap.value, item.id)
-    ? amountDraftMap.value[item.id]
-    : parseAmountNumber(item.amount);
-  const next = formatAmountForPatch(draft ?? null, item.amount);
-  delete amountDraftMap.value[item.id];
-  if ((next ?? null) === (item.amount ?? null)) {
-    return;
-  }
-  await onEditItem(item, "amount", next);
+function onAmountValueChange(item: InvoiceItem, value: number | null) {
+  const next = formatAmountForLocal(value, item.amount);
+  store.setItemAmount(item.id, next);
 }
 
 function statusType(item: InvoiceItem): "success" | "warning" | "error" | "default" {
@@ -661,7 +639,7 @@ watch(
                             :value="item.category ?? ''"
                             size="small"
                             placeholder="类别"
-                            @blur="(e) => onCategoryBlur(item, e)"
+                            @update:value="(v) => onCategoryUpdate(item, v)"
                           />
                         </td>
                         <td>
@@ -671,8 +649,7 @@ watch(
                             :precision="amountPrecision(item.amount)"
                             :step="amountStep(item.amount)"
                             :min="0"
-                            @update:value="(v) => onAmountDraftChange(item, v)"
-                            @blur="() => onAmountBlur(item)"
+                            @update:value="(v) => onAmountValueChange(item, v)"
                           />
                         </td>
                         <td>
@@ -755,8 +732,21 @@ watch(
         </n-tabs>
 
         <div class="status-bar">
-          <span class="status-main">{{ statusBarText }}</span>
-          <span class="status-summary">{{ summaryText }}</span>
+          <div class="status-meta">
+            <span class="status-main">{{ statusBarText }}</span>
+            <span class="status-summary">{{ summaryText }}</span>
+          </div>
+          <div v-if="store.isRecognizing || store.recognizeTotal > 0" class="status-progress-wrap">
+            <n-progress
+              class="status-progress"
+              type="line"
+              :percentage="store.recognizePercent"
+              :show-indicator="false"
+              :height="8"
+              :processing="store.isRecognizing"
+            />
+            <span class="status-progress-text">{{ recognizeProgressText }}</span>
+          </div>
         </div>
 
         <n-modal
