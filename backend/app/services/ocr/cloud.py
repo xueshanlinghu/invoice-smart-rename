@@ -84,6 +84,11 @@ def _pdf_page_to_png_data_url(file_path: Path, page: int = 1, dpi: int = 220) ->
     if dpi < 72:
         dpi = 72
 
+    pdf = None
+    page_obj = None
+    bitmap = None
+    image = None
+    buffer = None
     try:
         pdf = pdfium.PdfDocument(str(file_path))
         if len(pdf) < page:
@@ -93,10 +98,36 @@ def _pdf_page_to_png_data_url(file_path: Path, page: int = 1, dpi: int = 220) ->
         image = bitmap.to_pil()
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
+        content = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{content}"
     except Exception:
         return None
-    content = base64.b64encode(buffer.getvalue()).decode("ascii")
-    return f"data:image/png;base64,{content}"
+    finally:
+        try:
+            if hasattr(image, "close"):
+                image.close()
+        except Exception:
+            pass
+        try:
+            if hasattr(bitmap, "close"):
+                bitmap.close()
+        except Exception:
+            pass
+        try:
+            if hasattr(page_obj, "close"):
+                page_obj.close()
+        except Exception:
+            pass
+        try:
+            if hasattr(pdf, "close"):
+                pdf.close()
+        except Exception:
+            pass
+        try:
+            if buffer is not None:
+                buffer.close()
+        except Exception:
+            pass
 
 
 def _to_data_url(file_path: Path) -> str | None:

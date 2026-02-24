@@ -1,4 +1,4 @@
-export type InvoiceStatus = "pending" | "ok" | "needs_review" | "failed";
+export type InvoiceStatus = "pending" | "ok" | "failed";
 export type RenameAction = "rename" | "skip" | "manual_edit_required";
 export type ConflictType = "none" | "same_name" | "exists_other";
 export type CommitResultStatus = "pending" | "renamed" | "skipped" | "failed";
@@ -7,7 +7,6 @@ export interface TaskSummary {
   total: number;
   pending: number;
   ok: number;
-  needs_review: number;
   failed: number;
   conflict: number;
   rename_ready: number;

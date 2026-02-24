@@ -17,6 +17,7 @@ import type {
   AppSettings,
   AppSettingsUpdate,
   CommitPlanResponse,
+  CommitRenameItemResult,
   CommitRenameResponse,
   InvoiceItem,
   SyncItemPatch,
@@ -34,6 +35,9 @@ interface InvoiceState {
   isRecognizing: boolean;
   recognizeTotal: number;
   recognizeDone: number;
+  isRenaming: boolean;
+  renameTotal: number;
+  renameDone: number;
   sessionApiKey: string;
   localEdits: Record<string, { invoice_date: string | null; amount: string | null; category: string | null }>;
 }
@@ -52,6 +56,9 @@ export const useInvoiceStore = defineStore("invoice", {
     isRecognizing: false,
     recognizeTotal: 0,
     recognizeDone: 0,
+    isRenaming: false,
+    renameTotal: 0,
+    renameDone: 0,
     sessionApiKey: "",
     localEdits: {},
   }),
@@ -65,6 +72,10 @@ export const useInvoiceStore = defineStore("invoice", {
     recognizePercent(state): number {
       if (!state.recognizeTotal) return 0;
       return Math.min(100, Math.round((state.recognizeDone / state.recognizeTotal) * 100));
+    },
+    renamePercent(state): number {
+      if (!state.renameTotal) return 0;
+      return Math.min(100, Math.round((state.renameDone / state.renameTotal) * 100));
     },
   },
   actions: {
@@ -120,7 +131,33 @@ export const useInvoiceStore = defineStore("invoice", {
     },
     handleError(error: unknown) {
       const maybeAxios = error as { response?: { data?: { detail?: string } }; message?: string };
-      this.message = maybeAxios?.response?.data?.detail ?? maybeAxios?.message ?? "请求失败";
+      const detail = maybeAxios?.response?.data?.detail;
+      const message = maybeAxios?.message ?? "";
+      const raw = `${detail ?? ""} ${message}`.toLowerCase();
+      if (raw.includes("rename_files") && raw.includes("unknown command")) {
+        this.message = "桌面改名命令未加载，请重启 `npm run tauri:dev` 后重试";
+        return;
+      }
+      if (raw.includes("missing required key") && raw.includes("plan")) {
+        this.message = "改名参数传递失败，请重启 `npm run tauri:dev` 后重试";
+        return;
+      }
+      this.message = detail ?? maybeAxios?.message ?? "请求失败";
+    },
+    summarizeRenameResults(results: CommitRenameItemResult[]): string {
+      let renamed = 0;
+      let failed = 0;
+      let skipped = 0;
+      for (const item of results) {
+        if (item.result === "renamed") {
+          renamed += 1;
+        } else if (item.result === "failed") {
+          failed += 1;
+        } else if (item.result === "skipped") {
+          skipped += 1;
+        }
+      }
+      return `改名完成：成功 ${renamed}，失败 ${failed}，跳过 ${skipped}`;
     },
     async loadSettings() {
       try {
@@ -154,6 +191,9 @@ export const useInvoiceStore = defineStore("invoice", {
         this.localEdits = {};
         this.lastPlan = null;
         this.lastRename = null;
+        this.isRenaming = false;
+        this.renameTotal = 0;
+        this.renameDone = 0;
         this.recomputePreviewLocally();
         this.message = `已导入 ${this.task.summary.total} 个文件`;
       } catch (error) {
@@ -299,6 +339,9 @@ export const useInvoiceStore = defineStore("invoice", {
         this.lastRename = null;
         this.recognizeTotal = 0;
         this.recognizeDone = 0;
+        this.isRenaming = false;
+        this.renameTotal = 0;
+        this.renameDone = 0;
         this.message = "列表已清空";
       } catch (error) {
         this.handleError(error);
@@ -332,25 +375,47 @@ export const useInvoiceStore = defineStore("invoice", {
         return;
       }
       this.loading = true;
+      this.isRenaming = true;
+      this.renameDone = 0;
+      this.renameTotal = selectedItems.length;
       try {
         const selection = this.selectionSnapshot();
         await this.syncEditableItems(true);
 
         if (isTauriRuntime()) {
           this.lastPlan = await buildCommitPlan(this.task.id, this.selectedIds);
-          const tauriResults = await renameByTauri(this.lastPlan.plan);
+          const plan = this.lastPlan.plan;
+          this.renameTotal = plan.length;
+          this.renameDone = 0;
+
+          const tauriResults: CommitRenameItemResult[] = [];
+          for (const planItem of plan) {
+            const results = await renameByTauri([planItem]);
+            const first = results[0] ?? {
+              item_id: planItem.item_id,
+              source_path: planItem.source_path,
+              target_path: planItem.target_path,
+              result: "failed",
+              message: "tauri_result_empty",
+            };
+            tauriResults.push(first);
+            this.renameDone += 1;
+          }
           this.lastRename = await syncCommitResults(this.task.id, tauriResults);
         } else {
           this.lastRename = await commitRename(this.task.id, this.selectedIds);
+          this.renameTotal = this.lastRename.results.length;
+          this.renameDone = this.renameTotal;
         }
         const nextTask = await fetchTask(this.task.id);
         this.applyTask(nextTask, selection);
         this.recomputePreviewLocally();
-        this.message = "改名执行完成";
+        this.message = this.summarizeRenameResults(this.lastRename?.results ?? []);
       } catch (error) {
         this.handleError(error);
       } finally {
         this.loading = false;
+        this.isRenaming = false;
       }
     },
     toggleSelectAll(nextValue: boolean) {

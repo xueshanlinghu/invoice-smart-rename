@@ -88,8 +88,6 @@ def _build_summary(items: list[InvoiceItem]) -> TaskSummary:
             summary.pending += 1
         elif item.status == "ok":
             summary.ok += 1
-        elif item.status == "needs_review":
-            summary.needs_review += 1
         elif item.status == "failed":
             summary.failed += 1
 

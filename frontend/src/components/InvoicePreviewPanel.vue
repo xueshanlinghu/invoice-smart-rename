@@ -34,10 +34,23 @@ const fieldRows = computed(() => [
   { label: "项目名称", value: props.item?.item_name || "-" },
   { label: "类别", value: props.item?.category || "-" },
   { label: "金额", value: props.item?.amount || "-" },
-  { label: "状态", value: statusLabel(props.item?.status ?? null) },
+  { label: "状态", value: statusLabel(props.item) },
 ]);
 
 const failureReason = computed(() => {
+  if (props.item?.result === "failed") {
+    const message = props.item.result_message || "改名失败";
+    const normalized = message.toLowerCase();
+    if (
+      normalized.includes("os error 32")
+      || normalized.includes("os error 33")
+      || normalized.includes("file_in_use_after_retry")
+      || message.includes("另一个程序正在使用此文件")
+    ) {
+      return "文件被占用，请先关闭预览或其他正在打开该 PDF 的程序后重试";
+    }
+    return message;
+  }
   const reason = props.item?.failure_reason;
   if (!reason) return "";
   if (reason === "api_key_not_configured") return "未配置硅基流动 API Key";
@@ -47,11 +60,14 @@ const failureReason = computed(() => {
   return reason;
 });
 
-function statusLabel(status: string | null): string {
-  if (status === "ok") return "成功";
-  if (status === "needs_review") return "待复核";
-  if (status === "failed") return "失败";
-  if (status === "pending") return "待识别";
+function statusLabel(item: InvoiceItem | null): string {
+  if (!item) return "-";
+  if (item.result === "renamed") return "已改名";
+  if (item.result === "failed") return "改名失败";
+  if (item.result === "skipped") return "已跳过";
+  if (item.status === "ok") return "成功";
+  if (item.status === "failed") return "失败";
+  if (item.status === "pending") return "待识别";
   return "-";
 }
 

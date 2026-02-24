@@ -10,7 +10,9 @@ export async function renameByTauri(plan: CommitPlanItem[]): Promise<CommitRenam
   }
   const { invoke } = await import("@tauri-apps/api/core");
   const results = await invoke<CommitRenameItemResult[]>("rename_files", {
+    // Keep both key styles for compatibility with different invoke arg mapping behaviors.
     plan_items: plan,
+    planItems: plan,
   });
   return results;
 }

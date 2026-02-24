@@ -7,7 +7,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 
-InvoiceStatus = Literal["pending", "ok", "needs_review", "failed"]
+InvoiceStatus = Literal["pending", "ok", "failed"]
 RenameAction = Literal["rename", "skip", "manual_edit_required"]
 ConflictType = Literal["none", "same_name", "exists_other"]
 CommitResultStatus = Literal["pending", "renamed", "skipped", "failed"]
@@ -21,7 +21,6 @@ class TaskSummary(BaseModel):
     total: int = 0
     pending: int = 0
     ok: int = 0
-    needs_review: int = 0
     failed: int = 0
     conflict: int = 0
     rename_ready: int = 0

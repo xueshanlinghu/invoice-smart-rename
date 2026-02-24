@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   NButton,
   NCheckbox,
@@ -66,7 +66,7 @@ let unlistenTauriDrop: null | (() => void) = null;
 const summaryText = computed(() => {
   const summary = store.task?.summary;
   if (!summary) return "未导入文件";
-  return `总计 ${summary.total} | 待识别 ${summary.pending} | 成功 ${summary.ok} | 待复核 ${summary.needs_review} | 失败 ${summary.failed}`;
+  return `总计 ${summary.total} | 待识别 ${summary.pending} | 成功 ${summary.ok} | 失败 ${summary.failed}`;
 });
 
 const selectedCount = computed(() => store.selectedIds.length);
@@ -100,6 +100,10 @@ const statusBarText = computed(() => store.message || "就绪");
 const recognizeProgressText = computed(() => {
   if (!store.recognizeTotal) return "";
   return `识别进度 ${store.recognizeDone}/${store.recognizeTotal}（${store.recognizePercent}%）`;
+});
+const renameProgressText = computed(() => {
+  if (!store.renameTotal) return "";
+  return `改名进度 ${store.renameDone}/${store.renameTotal}（${store.renamePercent}%）`;
 });
 
 const normalizedTemplatePreview = computed(() => normalizeTemplate(filenameTemplate.value));
@@ -395,21 +399,38 @@ function onAmountValueChange(item: InvoiceItem, value: number | null) {
   store.setItemAmount(item.id, next);
 }
 
-function statusType(item: InvoiceItem): "success" | "warning" | "error" | "default" {
+function statusType(item: InvoiceItem): "success" | "error" | "default" {
+  if (item.result === "renamed") return "success";
+  if (item.result === "failed") return "error";
+  if (item.result === "skipped") return "default";
   if (item.status === "ok") return "success";
-  if (item.status === "needs_review") return "warning";
   if (item.status === "failed") return "error";
   return "default";
 }
 
 function statusLabel(item: InvoiceItem): string {
+  if (item.result === "renamed") return "已改名";
+  if (item.result === "failed") return "改名失败";
+  if (item.result === "skipped") return "已跳过";
   if (item.status === "ok") return "成功";
-  if (item.status === "needs_review") return "待复核";
   if (item.status === "failed") return "失败";
   return "待识别";
 }
 
 function failureReasonLabel(item: InvoiceItem): string {
+  if (item.result === "failed") {
+    const message = item.result_message || "改名失败";
+    const normalized = message.toLowerCase();
+    if (
+      normalized.includes("os error 32")
+      || normalized.includes("os error 33")
+      || normalized.includes("file_in_use_after_retry")
+      || message.includes("另一个程序正在使用此文件")
+    ) {
+      return "文件被占用，请先关闭预览或其他正在打开该 PDF 的程序后重试";
+    }
+    return message;
+  }
   if (!item.failure_reason) return "";
   if (item.failure_reason === "api_key_not_configured") return "未配置硅基流动 API Key";
   if (item.failure_reason === "missing_required_fields") return "缺少关键字段";
@@ -632,6 +653,11 @@ function cancelRenameConfirm() {
 
 async function confirmExecuteRename() {
   showRenameConfirm.value = false;
+  if (previewOpen.value) {
+    previewOpen.value = false;
+    await nextTick();
+    await new Promise((resolve) => setTimeout(resolve, 180));
+  }
   await store.executeRename();
 }
 
@@ -722,7 +748,6 @@ onUnmounted(() => {
                 <div class="work-list-pane">
                   <div class="table-head">
                     <h2>识别列表</h2>
-                    <span class="tip">{{ summaryText }}</span>
                   </div>
 
                   <n-spin :show="store.loading" class="list-spin">
@@ -768,7 +793,7 @@ onUnmounted(() => {
                             </td>
                             <td>
                               <n-tag :type="statusType(item)" size="small" round>{{ statusLabel(item) }}</n-tag>
-                              <div v-if="item.status === 'failed' && item.failure_reason" class="row-tip">
+                              <div v-if="failureReasonLabel(item)" class="row-tip">
                                 {{ failureReasonLabel(item) }}
                               </div>
                             </td>
@@ -940,7 +965,7 @@ onUnmounted(() => {
           </n-tab-pane>
         </n-tabs>
 
-        <div class="status-bar">
+        <div v-if="activeTab === 'work'" class="status-bar">
           <div class="status-meta">
             <span class="status-main">{{ statusBarText }}</span>
             <span class="status-summary">{{ summaryText }}</span>
@@ -955,6 +980,17 @@ onUnmounted(() => {
               :processing="store.isRecognizing"
             />
             <span class="status-progress-text">{{ recognizeProgressText }}</span>
+          </div>
+          <div v-if="store.isRenaming || store.renameTotal > 0" class="status-progress-wrap">
+            <n-progress
+              class="status-progress"
+              type="line"
+              :percentage="store.renamePercent"
+              :show-indicator="false"
+              :height="8"
+              :processing="store.isRenaming"
+            />
+            <span class="status-progress-text">{{ renameProgressText }}</span>
           </div>
         </div>
 

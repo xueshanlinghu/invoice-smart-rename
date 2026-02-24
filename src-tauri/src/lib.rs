@@ -4,6 +4,8 @@ use base64::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RenamePlanItem {
@@ -31,6 +33,26 @@ pub struct PreviewPayload {
 }
 
 const MAX_PREVIEW_FILE_SIZE: u64 = 20 * 1024 * 1024;
+const RENAME_MAX_RETRIES: u32 = 10;
+const RENAME_RETRY_DELAY_MS: u64 = 180;
+
+fn try_rename_with_retry(source: &PathBuf, target: &PathBuf) -> std::io::Result<()> {
+    let mut attempt: u32 = 0;
+    loop {
+        attempt += 1;
+        match std::fs::rename(source, target) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                let raw = err.raw_os_error();
+                let should_retry = matches!(raw, Some(32) | Some(33));
+                if !should_retry || attempt >= RENAME_MAX_RETRIES {
+                    return Err(err);
+                }
+                thread::sleep(Duration::from_millis(RENAME_RETRY_DELAY_MS));
+            }
+        }
+    }
+}
 
 #[tauri::command]
 fn rename_files(plan_items: Vec<RenamePlanItem>) -> Result<Vec<RenameResultItem>, String> {
@@ -61,7 +83,7 @@ fn rename_files(plan_items: Vec<RenamePlanItem>) -> Result<Vec<RenameResultItem>
             continue;
         }
 
-        match std::fs::rename(&source, &target) {
+        match try_rename_with_retry(&source, &target) {
             Ok(_) => results.push(RenameResultItem {
                 item_id: plan.item_id,
                 source_path: plan.source_path,
@@ -69,13 +91,21 @@ fn rename_files(plan_items: Vec<RenamePlanItem>) -> Result<Vec<RenameResultItem>
                 result: String::from("renamed"),
                 message: None,
             }),
-            Err(err) => results.push(RenameResultItem {
-                item_id: plan.item_id,
-                source_path: plan.source_path,
-                target_path: plan.target_path,
-                result: String::from("failed"),
-                message: Some(err.to_string()),
-            }),
+            Err(err) => {
+                let message = match err.raw_os_error() {
+                    Some(32) | Some(33) => {
+                        Some(format!("file_in_use_after_retry:{} (os error {})", err, err.raw_os_error().unwrap_or_default()))
+                    }
+                    _ => Some(err.to_string()),
+                };
+                results.push(RenameResultItem {
+                    item_id: plan.item_id,
+                    source_path: plan.source_path,
+                    target_path: plan.target_path,
+                    result: String::from("failed"),
+                    message,
+                });
+            }
         }
     }
 
