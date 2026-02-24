@@ -29,6 +29,19 @@ body {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-tabs .n-tabs-pane-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-tabs .n-tab-pane {
+  height: 100%;
+  min-height: 0;
 }
 
 .panel {
@@ -49,7 +62,7 @@ body {
 .work-panel {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 148px);
+  height: 100%;
   min-height: 0;
   gap: 10px;
 }
@@ -247,14 +260,18 @@ tbody tr:hover {
 }
 
 .settings-panel {
-  height: calc(100vh - 148px);
+  height: 100%;
+  min-height: 0;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .settings-stack {
   display: grid;
   grid-template-columns: 1fr;
   gap: 18px;
+  min-height: 0;
 }
 
 .setting-row {
@@ -615,11 +632,6 @@ tbody tr:hover {
 }
 
 @media (min-width: 1700px) {
-  .work-panel,
-  .settings-panel {
-    height: calc(100vh - 156px);
-  }
-
   .col-old-name {
     width: 260px;
   }
