@@ -20,6 +20,7 @@ import {
   NTag,
 } from "naive-ui";
 import Draggable from "vuedraggable";
+import InvoicePreviewPanel from "./components/InvoicePreviewPanel.vue";
 import { useInvoiceStore } from "./stores/invoice";
 import { isTauriRuntime } from "./api/tauri";
 import type { InvoiceItem } from "./api/types";
@@ -58,6 +59,8 @@ const pendingDeleteRowId = ref<string | null>(null);
 const showRenameConfirm = ref(false);
 const showClearConfirm = ref(false);
 const dragging = ref(false);
+const previewOpen = ref(false);
+const activePreviewItemId = ref<string | null>(null);
 let unlistenTauriDrop: null | (() => void) = null;
 
 const summaryText = computed(() => {
@@ -81,6 +84,12 @@ const renameDisabledReason = computed(() => {
 const canExecuteRename = computed(
   () => store.hasTask && hasSelection.value && !hasSelectedEmptyNewName.value && !store.loading,
 );
+const activePreviewItem = computed(() => {
+  const items = store.task?.items ?? [];
+  if (!items.length) return null;
+  if (!activePreviewItemId.value) return null;
+  return items.find((item) => item.id === activePreviewItemId.value) ?? null;
+});
 
 const modelOptions = computed(() =>
   (store.settings?.siliconflow_models ?? []).map((item) => ({ label: item, value: item })),
@@ -115,6 +124,25 @@ watch(
     syncSettingsToForm();
   },
   { deep: true },
+);
+
+watch(
+  () => store.task?.items,
+  (items) => {
+    const rows = items ?? [];
+    if (!rows.length) {
+      activePreviewItemId.value = null;
+      previewOpen.value = false;
+      return;
+    }
+
+    if (!activePreviewItemId.value) return;
+    const stillExists = rows.some((item) => item.id === activePreviewItemId.value);
+    if (!stillExists) {
+      activePreviewItemId.value = rows[0].id;
+    }
+  },
+  { deep: false },
 );
 
 function loadLocalApiKey(): string {
@@ -470,6 +498,9 @@ async function importByPaths(paths: string[]) {
   const unique = Array.from(new Set(paths.map((item) => item.trim()).filter(Boolean)));
   if (!unique.length) return;
   await store.importByPaths(unique);
+  if (store.task?.items.length) {
+    activePreviewItemId.value = store.task.items[0].id;
+  }
 }
 
 async function onDrop(event: DragEvent) {
@@ -540,6 +571,59 @@ function openRenameConfirm() {
     return;
   }
   showRenameConfirm.value = true;
+}
+
+function ensurePreviewTarget() {
+  const rows = store.task?.items ?? [];
+  if (!rows.length) return;
+  if (!activePreviewItemId.value || !rows.some((item) => item.id === activePreviewItemId.value)) {
+    activePreviewItemId.value = rows[0].id;
+  }
+}
+
+function togglePreviewPanel() {
+  if (!store.task?.items.length) {
+    store.message = "暂无可预览的记录";
+    return;
+  }
+  if (previewOpen.value) {
+    previewOpen.value = false;
+    return;
+  }
+  ensurePreviewTarget();
+  previewOpen.value = true;
+}
+
+function closePreviewPanel() {
+  previewOpen.value = false;
+}
+
+function openPreviewForItem(item: InvoiceItem) {
+  activePreviewItemId.value = item.id;
+  previewOpen.value = true;
+}
+
+function shouldIgnorePreviewClick(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  const ignoreSelectors = [
+    ".cell-editor",
+    "button",
+    "a",
+    "input",
+    "textarea",
+    ".n-input",
+    ".n-input-number",
+    ".n-date-picker",
+    ".n-picker",
+    ".n-checkbox",
+    ".n-base-selection",
+  ];
+  return ignoreSelectors.some((selector) => target.closest(selector));
+}
+
+function onRecordRowClick(event: MouseEvent, item: InvoiceItem) {
+  if (shouldIgnorePreviewClick(event.target)) return;
+  openPreviewForItem(item);
 }
 
 function cancelRenameConfirm() {
@@ -624,6 +708,9 @@ onUnmounted(() => {
                   <n-button size="small" @click="store.toggleSelectAll(allSelectedNext())">
                     {{ allSelectedNext() ? "全选" : "全不选" }}
                   </n-button>
+                  <n-button size="small" :disabled="!store.task?.items.length" @click="togglePreviewPanel">
+                    {{ previewOpen ? "关闭预览" : "打开预览" }}
+                  </n-button>
                   <n-tag round>{{ selectedCount }} 已选</n-tag>
                 </n-space>
               </div>
@@ -631,96 +718,112 @@ onUnmounted(() => {
                 {{ renameDisabledReason }}
               </p>
 
-              <div class="table-head">
-                <h2>识别列表</h2>
-                <span class="tip">{{ summaryText }}</span>
-              </div>
+              <div class="work-main" :class="{ 'preview-open': previewOpen }">
+                <div class="work-list-pane">
+                  <div class="table-head">
+                    <h2>识别列表</h2>
+                    <span class="tip">{{ summaryText }}</span>
+                  </div>
 
-              <n-spin :show="store.loading" class="list-spin">
-                <div v-if="!store.task?.items.length" class="empty-wrap">
-                  <n-empty description="暂无任务数据" />
+                  <n-spin :show="store.loading" class="list-spin">
+                    <div v-if="!store.task?.items.length" class="empty-wrap">
+                      <n-empty description="暂无任务数据" />
+                    </div>
+                    <div v-else class="table-wrap compact-table">
+                      <table>
+                        <colgroup>
+                          <col class="col-select" />
+                          <col class="col-status" />
+                          <col class="col-old-name" />
+                          <col class="col-item-name" />
+                          <col class="col-date" />
+                          <col class="col-category" />
+                          <col class="col-amount" />
+                          <col class="col-new-name" />
+                        </colgroup>
+                        <thead>
+                          <tr>
+                            <th>选中</th>
+                            <th>状态</th>
+                            <th>原文件名</th>
+                            <th>项目名称</th>
+                            <th>开票日期</th>
+                            <th>类别</th>
+                            <th>金额</th>
+                            <th>新文件名</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr
+                            v-for="item in store.task.items"
+                            :key="item.id"
+                            :class="{ 'preview-active-row': previewOpen && activePreviewItem?.id === item.id }"
+                            @click="(event) => onRecordRowClick(event, item)"
+                          >
+                            <td class="cell-editor">
+                              <n-checkbox
+                                :checked="item.selected"
+                                @update:checked="(v) => store.setItemSelected(item.id, Boolean(v))"
+                              />
+                            </td>
+                            <td>
+                              <n-tag :type="statusType(item)" size="small" round>{{ statusLabel(item) }}</n-tag>
+                              <div v-if="item.status === 'failed' && item.failure_reason" class="row-tip">
+                                {{ failureReasonLabel(item) }}
+                              </div>
+                            </td>
+                            <td>
+                              <div class="old-name" :title="item.old_name">{{ item.old_name }}</div>
+                            </td>
+                            <td>
+                              <div class="item-name" :title="item.item_name ?? ''">{{ item.item_name || "-" }}</div>
+                            </td>
+                            <td class="cell-editor">
+                              <n-date-picker
+                                type="date"
+                                clearable
+                                size="small"
+                                value-format="yyyyMMdd"
+                                :formatted-value="datePickerValue(item.invoice_date)"
+                                placeholder="YYYYMMDD"
+                                @update:formatted-value="(v) => onDateUpdate(item, v)"
+                              />
+                            </td>
+                            <td class="cell-editor">
+                              <n-input
+                                :value="item.category ?? ''"
+                                size="small"
+                                placeholder="类别"
+                                @update:value="(v) => onCategoryUpdate(item, v)"
+                              />
+                            </td>
+                            <td class="cell-editor">
+                              <n-input-number
+                                :value="amountEditorValue(item)"
+                                size="small"
+                                :precision="amountPrecision(item.amount)"
+                                :step="amountStep(item.amount)"
+                                :min="0"
+                                @update:value="(v) => onAmountValueChange(item, v)"
+                              />
+                            </td>
+                            <td>
+                              <div class="new-name" :title="item.suggested_name ?? ''">{{ item.suggested_name ?? "-" }}</div>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </n-spin>
                 </div>
-                <div v-else class="table-wrap compact-table">
-                  <table>
-                    <colgroup>
-                      <col class="col-select" />
-                      <col class="col-status" />
-                      <col class="col-old-name" />
-                      <col class="col-item-name" />
-                      <col class="col-date" />
-                      <col class="col-category" />
-                      <col class="col-amount" />
-                      <col class="col-new-name" />
-                    </colgroup>
-                    <thead>
-                      <tr>
-                        <th>选中</th>
-                        <th>状态</th>
-                        <th>原文件名</th>
-                        <th>项目名称</th>
-                        <th>开票日期</th>
-                        <th>类别</th>
-                        <th>金额</th>
-                        <th>新文件名</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="item in store.task.items" :key="item.id">
-                        <td>
-                          <n-checkbox
-                            :checked="item.selected"
-                            @update:checked="(v) => store.setItemSelected(item.id, Boolean(v))"
-                          />
-                        </td>
-                        <td>
-                          <n-tag :type="statusType(item)" size="small" round>{{ statusLabel(item) }}</n-tag>
-                          <div v-if="item.status === 'failed' && item.failure_reason" class="row-tip">
-                            {{ failureReasonLabel(item) }}
-                          </div>
-                        </td>
-                        <td>
-                          <div class="old-name" :title="item.old_name">{{ item.old_name }}</div>
-                        </td>
-                        <td>
-                          <n-input :value="item.item_name ?? ''" size="small" readonly placeholder="项目名称" />
-                        </td>
-                        <td>
-                          <n-date-picker
-                            type="date"
-                            clearable
-                            size="small"
-                            value-format="yyyyMMdd"
-                            :formatted-value="datePickerValue(item.invoice_date)"
-                            placeholder="YYYYMMDD"
-                            @update:formatted-value="(v) => onDateUpdate(item, v)"
-                          />
-                        </td>
-                        <td>
-                          <n-input
-                            :value="item.category ?? ''"
-                            size="small"
-                            placeholder="类别"
-                            @update:value="(v) => onCategoryUpdate(item, v)"
-                          />
-                        </td>
-                        <td>
-                          <n-input-number
-                            :value="amountEditorValue(item)"
-                            size="small"
-                            :precision="amountPrecision(item.amount)"
-                            :step="amountStep(item.amount)"
-                            :min="0"
-                            @update:value="(v) => onAmountValueChange(item, v)"
-                          />
-                        </td>
-                        <td>
-                          <div class="new-name" :title="item.suggested_name ?? ''">{{ item.suggested_name ?? "-" }}</div>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </n-spin>
+                <InvoicePreviewPanel
+                  v-if="previewOpen"
+                  class="work-preview-pane"
+                  :open="previewOpen"
+                  :item="activePreviewItem"
+                  @close="closePreviewPanel"
+                />
+              </div>
             </section>
           </n-tab-pane>
 

@@ -77,6 +77,13 @@ export interface CommitRenameResponse {
   results: CommitRenameItemResult[];
 }
 
+export interface PreviewPayload {
+  kind: "image" | "pdf";
+  mime: string;
+  base64_data: string;
+  file_name: string;
+}
+
 export interface SyncItemPatch {
   item_id: string;
   invoice_date: string | null;
