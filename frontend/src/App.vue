@@ -105,6 +105,10 @@ const renameProgressText = computed(() => {
   if (!store.renameTotal) return "";
   return `改名进度 ${store.renameDone}/${store.renameTotal}（${store.renamePercent}%）`;
 });
+const amountSummaryText = computed(() => {
+  const stats = store.amountStats;
+  return `金额合计 ${stats.totalDisplay} 元 | 已识别金额 ${stats.recognizedCount}/${stats.totalCount} | 未识别 ${stats.missingCount}`;
+});
 
 const normalizedTemplatePreview = computed(() => normalizeTemplate(filenameTemplate.value));
 const currentMappingSignature = computed(() => mappingSignature(rowsToMapping(mappingRows.value)));
@@ -970,6 +974,7 @@ onUnmounted(() => {
             <span class="status-main">{{ statusBarText }}</span>
             <span class="status-summary">{{ summaryText }}</span>
           </div>
+          <div class="status-amount">{{ amountSummaryText }}</div>
           <div v-if="store.isRecognizing || store.recognizeTotal > 0" class="status-progress-wrap">
             <n-progress
               class="status-progress"

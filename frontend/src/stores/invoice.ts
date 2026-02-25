@@ -44,6 +44,30 @@ interface InvoiceState {
 
 const DEFAULT_TEMPLATE = "{date}-{category}-{amount}";
 const INVALID_FILENAME_CHAR_PATTERN = /[<>:"/\\|?*\x00-\x1F]/g;
+const AMOUNT_PATTERN = /^(\d+)(?:\.(\d{1,2}))?$/;
+
+function parseAmountToCents(raw: string | null | undefined): number | null {
+  const value = (raw ?? "").trim().replace(/[￥¥,\s]/g, "");
+  if (!value) return null;
+  const matched = value.match(AMOUNT_PATTERN);
+  if (!matched) return null;
+
+  const integerPart = Number(matched[1]);
+  if (!Number.isFinite(integerPart)) return null;
+  const decimalPartRaw = (matched[2] ?? "").padEnd(2, "0");
+  const decimalPart = Number(decimalPartRaw);
+  if (!Number.isFinite(decimalPart)) return null;
+  return integerPart * 100 + decimalPart;
+}
+
+function formatCentsToYuan(cents: number): string {
+  if (!Number.isFinite(cents) || cents <= 0) return "0";
+  const integerPart = Math.floor(cents / 100);
+  const decimalPart = cents % 100;
+  if (decimalPart === 0) return String(integerPart);
+  if (decimalPart % 10 === 0) return `${integerPart}.${Math.floor(decimalPart / 10)}`;
+  return `${integerPart}.${String(decimalPart).padStart(2, "0")}`;
+}
 
 export const useInvoiceStore = defineStore("invoice", {
   state: (): InvoiceState => ({
@@ -76,6 +100,36 @@ export const useInvoiceStore = defineStore("invoice", {
     renamePercent(state): number {
       if (!state.renameTotal) return 0;
       return Math.min(100, Math.round((state.renameDone / state.renameTotal) * 100));
+    },
+    amountStats(state): {
+      totalCents: number;
+      totalDisplay: string;
+      recognizedCount: number;
+      missingCount: number;
+      totalCount: number;
+    } {
+      const items = state.task?.items ?? [];
+      let totalCents = 0;
+      let recognizedCount = 0;
+      let missingCount = 0;
+
+      for (const item of items) {
+        const cents = parseAmountToCents(item.amount);
+        if (cents === null) {
+          missingCount += 1;
+          continue;
+        }
+        totalCents += cents;
+        recognizedCount += 1;
+      }
+
+      return {
+        totalCents,
+        totalDisplay: formatCentsToYuan(totalCents),
+        recognizedCount,
+        missingCount,
+        totalCount: items.length,
+      };
     },
   },
   actions: {

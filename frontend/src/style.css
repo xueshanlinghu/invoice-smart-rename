@@ -549,6 +549,14 @@ tbody tr:hover {
   text-overflow: ellipsis;
 }
 
+.status-amount {
+  color: #355f68;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .status-progress-wrap {
   display: flex;
   align-items: center;
@@ -628,6 +636,10 @@ tbody tr:hover {
   .status-progress-text {
     min-width: 0;
     text-align: left;
+  }
+
+  .status-amount {
+    white-space: normal;
   }
 }
 
