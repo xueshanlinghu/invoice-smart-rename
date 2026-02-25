@@ -1,85 +1,153 @@
 # 发票智能识别并重命名
 
-基于 Tauri + Vue + FastAPI 的桌面工具：导入发票文件，调用云端视觉大模型提取字段，人工复核后批量改名。
+用于批量导入发票，识别关键信息并完成批量改名。
 
-## 功能
+## 使用前准备
 
-- 支持导入 `PDF / PNG / JPG / JPEG`
-- 支持拖拽导入（桌面窗口内直接拖入）
-- 云端结构化识别字段：
-  - `invoice_date`（开票日期）
-  - `item_name`（项目名称）
-  - `amount`（价税合计小写金额）
-- 关键词映射自动分类（未命中自动归为“其他”）
-- 命名模板支持 `{date}`、`{category}`、`{amount}`
-- 手工修改后批量执行改名
-- 设置项写入根目录 `.env` 并立即生效
+首次使用请准备硅基流动 API Key，并确保网络可访问其接口。
 
-## 环境准备
+## 使用步骤
 
-- Node.js 20+
-- Rust（含 `cargo`）
-- Tauri CLI（通过项目依赖安装）
-- Python 3.12+
-- uv
+1. 进入“设置”页面：
+   - 选择模型（默认即可）
+   - 填写 API Key（或者在启动前在.env文件中配置）
+   - 点击“保存配置”
 
-## 配置
+2. 回到“发票处理”页面：
+   - 直接拖拽发票文件到导入区域（支持 `PDF / PNG / JPG / JPEG`）
 
-1. 复制配置模板：
+3. 勾选需要处理的记录，点击“识别选中发票”。
+
+4. 在识别列表中人工核对并修正：
+   - 开票日期
+   - 类别
+   - 金额
+   - 新文件名预览会自动更新
+
+5. 点击“执行改名”并确认，完成批量改名。
+   - 状态列可查看每条结果（已改名 / 改名失败 / 已跳过）
+   - 底部状态栏可查看处理进度和汇总信息
+
+## 启动命令
+
+如果你是本地源码运行，请使用以下命令：
+
+1. 安装运行环境（Windows）：
+
+安装 Node.js（含 npm）：
+
+官网：https://nodejs.org/
+
+```powershell
+winget install -e --id OpenJS.NodeJS.LTS
+```
+
+安装 `uv`（二选一）：
+
+官网：https://docs.astral.sh/uv/
+
+```powershell
+winget install -e --id astral-sh.uv
+```
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+安装 `Rust + cargo`：
+
+```powershell
+winget install -e --id Rustlang.Rustup
+rustup default stable-msvc
+```
+
+安装 Windows C++ 构建工具（MSVC）：
+
+官网：https://visualstudio.microsoft.com/visual-cpp-build-tools/
+
+也可直接下载 Build Tools 安装器：
+https://aka.ms/vs/17/release/vs_BuildTools.exe
+
+使用官网安装器时，建议勾选：
+- 工作负载：`使用 C++ 的桌面开发`
+- 组件：`MSVC v143 - VS 2022 C++ x64/x86 生成工具`
+- 组件：`Windows 10/11 SDK`
+- 组件：`用于 Windows 的 C++ CMake 工具`
+
+```powershell
+winget install -e --id Microsoft.VisualStudio.2022.BuildTools
+```
+
+安装 WebView2 Runtime：
+
+说明：Windows 11 大多数情况下已预装（随 Edge 提供），但建议仍执行安装或先检查版本。
+
+```powershell
+winget install -e --id Microsoft.EdgeWebView2Runtime
+```
+
+安装后建议重开终端，并检查：
+
+```powershell
+node -v
+npm -v
+uv --version
+rustc --version
+cargo --version
+```
+
+检查 WebView2 Runtime 是否已安装及版本（保存为 .ps1 脚本并双击执行）：
+
+```powershell
+$webviewGuid = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+$paths = @(
+  "HKLM:\\SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\$webviewGuid",
+  "HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\$webviewGuid",
+  "HKCU:\\Software\\Microsoft\\EdgeUpdate\\Clients\\$webviewGuid"
+)
+$found = $false
+foreach ($p in $paths) {
+  if (Test-Path $p) {
+    $ver = (Get-ItemProperty -Path $p -ErrorAction SilentlyContinue).pv
+    if ($ver) {
+      Write-Host "WebView2 Runtime version: $ver"
+      $found = $true
+      break
+    }
+  }
+}
+if (-not $found) {
+  Write-Host "WebView2 Runtime 未检测到，请先安装 Microsoft Edge WebView2 Runtime。"
+}
+```
+
+2. 初始化配置文件（首次）：
 
 ```bash
 copy .env.example .env
 ```
 
-2. 至少配置以下项：
-
+至少配置：
 - `SILICONFLOW_API_KEY`
-- `SILICONFLOW_MODEL`（默认 `Qwen/Qwen3-VL-32B-Instruct`）
-- `APP_HOST`、`APP_PORT`（后端监听地址）
-- `VITE_DEV_SERVER_HOST`、`VITE_DEV_SERVER_PORT`（前端开发端口）
 
-说明：
-- 前端 API 地址默认自动拼接为 `http://APP_HOST:APP_PORT`
-- 如需手工覆盖，可设置 `VITE_API_BASE_URL`
-
-## 安装依赖
+3. 安装依赖：
 
 ```bash
 uv sync --project backend
 npm install
 ```
 
-## 开发启动
-
-1. 启动后端 API：
+4. 启动后端 API：
 
 ```bash
 npm run dev:api
 ```
 
-2. 启动桌面开发（包含前端热更新）：
+5. 启动桌面程序：
 
 ```bash
 npm run tauri:dev
 ```
-
-可选：仅调试前端页面时使用：
-
-```bash
-npm run dev:web
-```
-
-## 打包
-
-```bash
-npm run tauri:build
-```
-
-## 目录说明
-
-- `backend/`：FastAPI 服务与识别/命名逻辑
-- `frontend/`：Vue 3 界面
-- `src-tauri/`：Tauri 桌面壳与本地改名命令
 
 ## 许可证
 

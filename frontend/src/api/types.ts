@@ -1,4 +1,4 @@
-export type InvoiceStatus = "pending" | "ok" | "needs_review" | "failed";
+export type InvoiceStatus = "pending" | "ok" | "failed";
 export type RenameAction = "rename" | "skip" | "manual_edit_required";
 export type ConflictType = "none" | "same_name" | "exists_other";
 export type CommitResultStatus = "pending" | "renamed" | "skipped" | "failed";
@@ -7,7 +7,6 @@ export interface TaskSummary {
   total: number;
   pending: number;
   ok: number;
-  needs_review: number;
   failed: number;
   conflict: number;
   rename_ready: number;
@@ -25,8 +24,6 @@ export interface InvoiceItem {
   amount: string | null;
   category: string | null;
   vendor_name: string | null;
-  fields_confidence: Record<string, number>;
-  overall_confidence: number;
   extracted_text: string | null;
   status: InvoiceStatus;
   failure_reason: string | null;
@@ -77,6 +74,20 @@ export interface CommitRenameItemResult {
 export interface CommitRenameResponse {
   task_id: string;
   results: CommitRenameItemResult[];
+}
+
+export interface PreviewPayload {
+  kind: "image" | "pdf";
+  mime: string;
+  base64_data: string;
+  file_name: string;
+}
+
+export interface SyncItemPatch {
+  item_id: string;
+  invoice_date: string | null;
+  amount: string | null;
+  category: string | null;
 }
 
 export interface AppSettings {

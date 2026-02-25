@@ -11,6 +11,14 @@ def main() -> None:
         host=settings.app_host,
         port=settings.app_port,
         reload=True,
+        reload_excludes=[
+            ".env",
+            "*.env",
+            ".venv/*",
+            "backend/.venv/*",
+            "src-tauri/target/*",
+            "node_modules/*",
+        ],
     )
 
 

@@ -20,14 +20,12 @@ class OcrPipeline:
         if not self.cloud_client.is_configured:
             item.status = "failed"
             item.failure_reason = "api_key_not_configured"
-            item.overall_confidence = 0.0
             return item
 
         file_path = Path(item.source_path)
         if not file_path.exists():
             item.status = "failed"
             item.failure_reason = "file_not_found"
-            item.overall_confidence = 0.0
             return item
 
         try:
@@ -35,7 +33,6 @@ class OcrPipeline:
         except Exception:
             item.status = "failed"
             item.failure_reason = "cloud_request_failed"
-            item.overall_confidence = 0.0
             return item
 
         item.invoice_date = extracted.get("invoice_date")
@@ -43,13 +40,6 @@ class OcrPipeline:
         item.amount = extracted.get("amount")
         item.category = infer_category(item.item_name, item.old_name, category_mapping)
         item.vendor_name = None
-        item.fields_confidence = {
-            "invoice_date": 1.0 if item.invoice_date else 0.0,
-            "item_name": 1.0 if item.item_name else 0.0,
-            "amount": 1.0 if item.amount else 0.0,
-            "category": 0.95 if item.category and item.category != "其他" else 0.7,
-        }
-        item.overall_confidence = float(extracted.get("confidence") or 0.0)
         item.extracted_text = None
         item.updated_at = datetime.utcnow()
 
@@ -57,11 +47,6 @@ class OcrPipeline:
         if not required_ready:
             item.status = "failed"
             item.failure_reason = "missing_required_fields"
-            return item
-
-        if item.overall_confidence < 0.65:
-            item.status = "needs_review"
-            item.failure_reason = "low_confidence"
             return item
 
         item.status = "ok"

@@ -4,6 +4,7 @@ import type {
   AppSettingsUpdate,
   CommitPlanResponse,
   CommitRenameResponse,
+  SyncItemPatch,
   TaskState,
 } from "./types";
 
@@ -19,10 +20,15 @@ export async function importPaths(paths: string[]): Promise<TaskState> {
   return data;
 }
 
-export async function recognizeTask(taskId: string, itemIds?: string[]): Promise<TaskState> {
+export async function recognizeTask(
+  taskId: string,
+  itemIds?: string[],
+  sessionApiKey?: string,
+): Promise<TaskState> {
   const { data } = await api.post<TaskState>("/api/recognize", {
     task_id: taskId,
     item_ids: itemIds,
+    session_api_key: sessionApiKey || undefined,
   });
   return data;
 }
@@ -47,6 +53,21 @@ export async function patchItem(
   patch: Record<string, unknown>,
 ): Promise<TaskState> {
   const { data } = await api.patch<TaskState>(`/api/items/${taskId}/${itemId}`, patch);
+  return data;
+}
+
+export async function removeItems(taskId: string, itemIds: string[]): Promise<TaskState> {
+  const { data } = await api.post<TaskState>("/api/remove-items", {
+    task_id: taskId,
+    item_ids: itemIds,
+  });
+  return data;
+}
+
+export async function clearItems(taskId: string): Promise<TaskState> {
+  const { data } = await api.post<TaskState>("/api/clear-items", {
+    task_id: taskId,
+  });
   return data;
 }
 
@@ -84,6 +105,14 @@ export async function syncCommitResults(
   const { data } = await api.post<CommitRenameResponse>("/api/commit-results", {
     task_id: taskId,
     results,
+  });
+  return data;
+}
+
+export async function syncItems(taskId: string, items: SyncItemPatch[]): Promise<TaskState> {
+  const { data } = await api.post<TaskState>("/api/sync-items", {
+    task_id: taskId,
+    items,
   });
   return data;
 }

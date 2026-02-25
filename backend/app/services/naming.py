@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 import re
 
 from app.schemas import InvoiceItem, RenamePlanItem
-from app.utils.text import format_amount_to_yuan, sanitize_component
+from app.utils.text import sanitize_component
 
 
 DEFAULT_TEMPLATE = "{date}-{category}-{amount}"
@@ -24,17 +24,22 @@ class NamingTokens:
 def _format_date(date_value: str | None) -> str:
     if not date_value:
         return "19700101"
+    digits = re.sub(r"\D+", "", date_value)
+    if len(digits) == 8:
+        return digits
     return date_value.replace("-", "")
 
 
 def _format_amount(amount: str | None) -> str:
     if not amount:
-        return "0.00元"
+        return "0元"
     try:
         decimal_value = Decimal(amount)
     except InvalidOperation:
-        return "0.00元"
-    return format_amount_to_yuan(decimal_value)
+        return "0元"
+    quantized = decimal_value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    normalized = format(quantized, "f").rstrip("0").rstrip(".")
+    return f"{normalized or '0'}元"
 
 
 def _render_template(template: str, tokens: NamingTokens) -> str:
@@ -88,7 +93,7 @@ def apply_name_preview(items: list[InvoiceItem], template: str | None = None) ->
         tokens = NamingTokens(
             date=_format_date(item.invoice_date),
             category=sanitize_component(category, fallback="其他"),
-            amount=sanitize_component(_format_amount(item.amount), fallback="0.00元"),
+            amount=sanitize_component(_format_amount(item.amount), fallback="0元"),
             ext=ext,
         )
         rendered = _render_template(template, tokens)

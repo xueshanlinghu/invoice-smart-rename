@@ -11,6 +11,9 @@ __pycache__/
 node_modules/
 frontend/node_modules/
 frontend/dist/
+dist/
+*.tsbuildinfo
+frontend/src/**/*.js
 
 # Rust / Tauri
 src-tauri/target/

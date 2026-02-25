@@ -7,7 +7,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 
-InvoiceStatus = Literal["pending", "ok", "needs_review", "failed"]
+InvoiceStatus = Literal["pending", "ok", "failed"]
 RenameAction = Literal["rename", "skip", "manual_edit_required"]
 ConflictType = Literal["none", "same_name", "exists_other"]
 CommitResultStatus = Literal["pending", "renamed", "skipped", "failed"]
@@ -21,7 +21,6 @@ class TaskSummary(BaseModel):
     total: int = 0
     pending: int = 0
     ok: int = 0
-    needs_review: int = 0
     failed: int = 0
     conflict: int = 0
     rename_ready: int = 0
@@ -40,9 +39,6 @@ class InvoiceItem(BaseModel):
     amount: str | None = None
     category: str | None = None
     vendor_name: str | None = None
-
-    fields_confidence: dict[str, float] = Field(default_factory=dict)
-    overall_confidence: float = 0.0
 
     extracted_text: str | None = None
 
@@ -78,12 +74,22 @@ class ImportRequest(BaseModel):
 class RecognizeRequest(BaseModel):
     task_id: str
     item_ids: list[str] | None = None
+    session_api_key: str | None = None
 
 
 class PreviewRequest(BaseModel):
     task_id: str
     template: str | None = None
     item_ids: list[str] | None = None
+
+
+class RemoveItemsRequest(BaseModel):
+    task_id: str
+    item_ids: list[str]
+
+
+class ClearItemsRequest(BaseModel):
+    task_id: str
 
 
 class CommitPlanRequest(BaseModel):
@@ -130,6 +136,18 @@ class CommitRenameResponse(BaseModel):
 class CommitResultsSyncRequest(BaseModel):
     task_id: str
     results: list[CommitRenameItemResult]
+
+
+class InvoiceSyncPatch(BaseModel):
+    item_id: str
+    invoice_date: str | None = None
+    amount: str | None = None
+    category: str | None = None
+
+
+class SyncItemsRequest(BaseModel):
+    task_id: str
+    items: list[InvoiceSyncPatch]
 
 
 class InvoicePatchRequest(BaseModel):

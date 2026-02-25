@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.schemas import (
+    ClearItemsRequest,
     CommitPlanRequest,
     CommitPlanResponse,
     CommitResultsSyncRequest,
@@ -18,8 +19,10 @@ from app.schemas import (
     InvoicePatchRequest,
     PreviewRequest,
     RecognizeRequest,
+    RemoveItemsRequest,
     SettingsResponse,
     SettingsUpdateRequest,
+    SyncItemsRequest,
     TaskState,
     TaskSummary,
 )
@@ -62,10 +65,11 @@ def _to_settings_response(data: dict) -> SettingsResponse:
     )
 
 
-def _new_pipeline(settings_data: dict) -> OcrPipeline:
+def _new_pipeline(settings_data: dict, *, api_key_override: str | None = None) -> OcrPipeline:
+    api_key = (api_key_override or "").strip() or str(settings_data["siliconflow_api_key"])
     return OcrPipeline(
         base_url=str(settings_data["siliconflow_base_url"]),
-        api_key=str(settings_data["siliconflow_api_key"]),
+        api_key=api_key,
         model=str(settings_data["siliconflow_model"]),
     )
 
@@ -84,8 +88,6 @@ def _build_summary(items: list[InvoiceItem]) -> TaskSummary:
             summary.pending += 1
         elif item.status == "ok":
             summary.ok += 1
-        elif item.status == "needs_review":
-            summary.needs_review += 1
         elif item.status == "failed":
             summary.failed += 1
 
@@ -154,7 +156,7 @@ def recognize_items(request: RecognizeRequest) -> TaskState:
     target_ids = set(request.item_ids or [item.id for item in task.items])
     settings_data = _load_settings()
     mapping = dict(settings_data["category_mapping"])
-    pipeline = _new_pipeline(settings_data)
+    pipeline = _new_pipeline(settings_data, api_key_override=request.session_api_key)
 
     for item in task.items:
         if item.id not in target_ids:
@@ -235,6 +237,26 @@ def commit_results(request: CommitResultsSyncRequest) -> CommitRenameResponse:
     return CommitRenameResponse(task_id=task.id, results=request.results)
 
 
+@app.post("/api/sync-items", response_model=TaskState)
+def sync_items(request: SyncItemsRequest) -> TaskState:
+    task = _must_task(request.task_id)
+    if not request.items:
+        return _save_task(task)
+
+    index = _item_index(task)
+    for patch in request.items:
+        item = index.get(patch.item_id)
+        if not item:
+            continue
+        item.invoice_date = patch.invoice_date
+        item.amount = patch.amount
+        item.category = patch.category
+        item.updated_at = _utcnow()
+
+    apply_name_preview(task.items, template=task.template)
+    return _save_task(task)
+
+
 @app.patch("/api/items/{task_id}/{item_id}", response_model=TaskState)
 def patch_item(task_id: str, item_id: str, request: InvoicePatchRequest) -> TaskState:
     task = _must_task(task_id)
@@ -246,6 +268,30 @@ def patch_item(task_id: str, item_id: str, request: InvoicePatchRequest) -> Task
     for key, value in patch.items():
         setattr(item, key, value)
     item.updated_at = _utcnow()
+    preview_related_fields = {"invoice_date", "category", "amount", "manual_name", "item_name", "status"}
+    if any(field in patch for field in preview_related_fields):
+        apply_name_preview(task.items, template=task.template)
+    return _save_task(task)
+
+
+@app.post("/api/remove-items", response_model=TaskState)
+def remove_items(request: RemoveItemsRequest) -> TaskState:
+    task = _must_task(request.task_id)
+    if not request.item_ids:
+        return _save_task(task)
+
+    target_ids = set(request.item_ids)
+    task.items = [item for item in task.items if item.id not in target_ids]
+    apply_name_preview(task.items, template=task.template)
+    for item in task.items:
+        item.updated_at = _utcnow()
+    return _save_task(task)
+
+
+@app.post("/api/clear-items", response_model=TaskState)
+def clear_items(request: ClearItemsRequest) -> TaskState:
+    task = _must_task(request.task_id)
+    task.items = []
     return _save_task(task)
 
 
