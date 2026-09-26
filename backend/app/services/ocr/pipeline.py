@@ -4,7 +4,8 @@ from datetime import datetime
 from pathlib import Path
 
 from app.schemas import InvoiceItem
-from app.services.ocr.cloud import SiliconFlowClient
+from app.services.importer import validate_invoice_file
+from app.services.ocr.cloud import PROMPT_VERSION, SiliconFlowClient
 from app.services.settings_store import infer_category
 
 
@@ -27,7 +28,16 @@ class OcrPipeline:
             item.status = "failed"
             item.failure_reason = "file_not_found"
             return item
+        validation_error = validate_invoice_file(file_path)
+        if validation_error:
+            item.status = "failed"
+            item.failure_reason = validation_error
+            return item
 
+        item.recognition_source = "cloud"
+        item.recognition_model = self.cloud_client.model
+        item.prompt_version = PROMPT_VERSION
+        item.cloud_call_count += 1
         try:
             extracted = self.cloud_client.extract_fields(file_path=file_path)
         except Exception:
@@ -42,6 +52,7 @@ class OcrPipeline:
         item.vendor_name = None
         item.extracted_text = None
         item.updated_at = datetime.utcnow()
+        item.recognized_at = item.updated_at
 
         required_ready = bool(item.invoice_date and item.item_name and item.amount)
         if not required_ready:

@@ -21,6 +21,7 @@ STRUCTURED_PROMPT = (
     "item_name(项目名称，中间表格“项目名称”列，若有多行取第一条有效项目名，字符串或null), "
     "amount(价税合计小写金额，即“(小写)”右侧金额，纯数字字符串如26.80或null)。"
 )
+PROMPT_VERSION = "invoice-fields-v1"
 
 DATE_PATTERN = re.compile(r"(20\d{2})[^\d]?(\d{1,2})[^\d]?(\d{1,2})")
 AMOUNT_PATTERN = re.compile(r"^\d+(?:\.\d{1,2})?$")

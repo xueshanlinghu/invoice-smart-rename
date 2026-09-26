@@ -4,8 +4,12 @@ import {
   clearItems,
   commitRename,
   fetchTask,
+  fetchRecentTask,
+  exportTask,
   getSettings,
   importPaths,
+  importTaskBackup,
+  recalculateTask,
   recognizeTask,
   removeItems,
   syncCommitResults,
@@ -22,6 +26,7 @@ import type {
   InvoiceItem,
   SyncItemPatch,
   TaskState,
+  TaskBackup,
 } from "../api/types";
 import { applyNamePreviewLocal } from "../utils/naming";
 
@@ -39,12 +44,15 @@ interface InvoiceState {
   renameTotal: number;
   renameDone: number;
   sessionApiKey: string;
+  stopRecognitionRequested: boolean;
   localEdits: Record<string, { invoice_date: string | null; amount: string | null; category: string | null }>;
 }
 
 const DEFAULT_TEMPLATE = "{date}-{category}-{amount}";
 const INVALID_FILENAME_CHAR_PATTERN = /[<>:"/\\|?*\x00-\x1F]/g;
 const AMOUNT_PATTERN = /^(\d+)(?:\.(\d{1,2}))?$/;
+const editSyncTimers = new WeakMap<object, ReturnType<typeof setTimeout>>();
+const editSyncRequests = new WeakMap<object, Promise<void>>();
 
 function parseAmountToCents(raw: string | null | undefined): number | null {
   const value = (raw ?? "").trim().replace(/[￥¥,\s]/g, "");
@@ -84,6 +92,7 @@ export const useInvoiceStore = defineStore("invoice", {
     renameTotal: 0,
     renameDone: 0,
     sessionApiKey: "",
+    stopRecognitionRequested: false,
     localEdits: {},
   }),
   getters: {
@@ -92,6 +101,9 @@ export const useInvoiceStore = defineStore("invoice", {
     },
     hasTask(state): boolean {
       return !!state.task?.id;
+    },
+    hasPendingEdits(state): boolean {
+      return Object.keys(state.localEdits).length > 0;
     },
     recognizePercent(state): number {
       if (!state.recognizeTotal) return 0;
@@ -154,6 +166,7 @@ export const useInvoiceStore = defineStore("invoice", {
         item.invoice_date = localEdit.invoice_date;
         item.amount = localEdit.amount;
         item.category = localEdit.category;
+        item.recognition_source = "manual";
       }
       const aliveItemIds = new Set(nextTask.items.map((item) => item.id));
       for (const itemId of Object.keys(this.localEdits)) {
@@ -220,6 +233,18 @@ export const useInvoiceStore = defineStore("invoice", {
         this.handleError(error);
       }
     },
+    async restoreRecentTask() {
+      try {
+        const recent = await fetchRecentTask();
+        if (recent?.items.length) {
+          this.applyTask(recent);
+          this.recomputePreviewLocally();
+          this.message = `已恢复最近任务，共 ${recent.items.length} 项`;
+        }
+      } catch (error) {
+        this.handleError(error);
+      }
+    },
     async saveSettings(update: AppSettingsUpdate) {
       try {
         this.settings = await updateSettings(update);
@@ -238,18 +263,21 @@ export const useInvoiceStore = defineStore("invoice", {
       this.recomputePreviewLocally(template);
       this.message = "命名模板已保存";
     },
-    async importByPaths(paths: string[]) {
+    async importByPaths(paths: string[], newTask = false) {
       this.loading = true;
       try {
-        this.task = await importPaths(paths);
-        this.localEdits = {};
+        await this.syncEditableItems(true);
+        const previousCount = newTask ? 0 : (this.task?.items.length ?? 0);
+        this.task = await importPaths(paths, newTask ? undefined : this.task?.id, newTask);
+        if (newTask) this.localEdits = {};
         this.lastPlan = null;
         this.lastRename = null;
         this.isRenaming = false;
         this.renameTotal = 0;
         this.renameDone = 0;
         this.recomputePreviewLocally();
-        this.message = `已导入 ${this.task.summary.total} 个文件`;
+        const added = Math.max(0, this.task.summary.total - previousCount);
+        this.message = `已追加 ${added} 个文件，当前共 ${this.task.summary.total} 项`;
       } catch (error) {
         this.handleError(error);
       } finally {
@@ -276,36 +304,42 @@ export const useInvoiceStore = defineStore("invoice", {
       const item = this.task?.items.find((row) => row.id === itemId);
       if (!item) return;
       item.invoice_date = invoiceDate;
+      item.recognition_source = "manual";
       this.localEdits[itemId] = {
         invoice_date: item.invoice_date ?? null,
         amount: item.amount ?? null,
         category: item.category ?? null,
       };
       this.recomputePreviewLocally();
+      this.scheduleEditableSync();
     },
     setItemCategory(itemId: string, category: string | null) {
       const item = this.task?.items.find((row) => row.id === itemId);
       if (!item) return;
       item.category = this.sanitizeCategoryText(category);
+      item.recognition_source = "manual";
       this.localEdits[itemId] = {
         invoice_date: item.invoice_date ?? null,
         amount: item.amount ?? null,
         category: item.category ?? null,
       };
       this.recomputePreviewLocally();
+      this.scheduleEditableSync();
     },
     setItemAmount(itemId: string, amount: string | null) {
       const item = this.task?.items.find((row) => row.id === itemId);
       if (!item) return;
       item.amount = this.normalizeNullableText(amount);
+      item.recognition_source = "manual";
       this.localEdits[itemId] = {
         invoice_date: item.invoice_date ?? null,
         amount: item.amount ?? null,
         category: item.category ?? null,
       };
       this.recomputePreviewLocally();
+      this.scheduleEditableSync();
     },
-    async recognize(itemIds?: string[]) {
+    async recognize(itemIds?: string[], forceRefresh = false) {
       if (!this.task?.id) return;
       const targetIds = itemIds ?? this.selectedIds;
       if (!targetIds.length) {
@@ -317,19 +351,26 @@ export const useInvoiceStore = defineStore("invoice", {
       this.isRecognizing = true;
       this.recognizeTotal = targetIds.length;
       this.recognizeDone = 0;
-      for (const itemId of targetIds) {
-        delete this.localEdits[itemId];
-      }
-
+      this.stopRecognitionRequested = false;
       try {
+        await this.syncEditableItems(true);
         const selection = this.selectionSnapshot();
         for (const itemId of targetIds) {
-          const nextTask = await recognizeTask(this.task.id, [itemId], this.sessionApiKey || undefined);
+          if (this.stopRecognitionRequested) break;
+          delete this.localEdits[itemId];
+          const nextTask = await recognizeTask(
+            this.task.id,
+            [itemId],
+            this.sessionApiKey || undefined,
+            forceRefresh,
+          );
           this.applyTask(nextTask, selection);
           this.recomputePreviewLocally();
           this.recognizeDone += 1;
         }
-        this.message = `识别完成（${this.recognizeDone}/${this.recognizeTotal}）`;
+        this.message = this.stopRecognitionRequested
+          ? `已停止识别（完成 ${this.recognizeDone}/${this.recognizeTotal}）`
+          : `识别完成（${this.recognizeDone}/${this.recognizeTotal}）`;
       } catch (error) {
         this.handleError(error);
       } finally {
@@ -337,28 +378,115 @@ export const useInvoiceStore = defineStore("invoice", {
         this.isRecognizing = false;
       }
     },
+    async recognizePending() {
+      const ids = (this.task?.items ?? []).filter((item) => item.status === "pending").map((item) => item.id);
+      if (!ids.length) {
+        this.message = "没有待识别项目";
+        return;
+      }
+      await this.recognize(ids, false);
+    },
+    async retryFailed() {
+      const ids = (this.task?.items ?? []).filter((item) => item.status === "failed").map((item) => item.id);
+      if (!ids.length) {
+        this.message = "没有可重试的失败项目";
+        return;
+      }
+      await this.recognize(ids, false);
+    },
+    stopRecognizing() {
+      if (this.isRecognizing) {
+        this.stopRecognitionRequested = true;
+        this.message = "正在停止，将不再发送后续识别请求";
+      }
+    },
+    async recalculate(operations: Array<"category" | "name">) {
+      if (!this.task?.id) return 0;
+      await this.syncEditableItems(true);
+      const selection = this.selectionSnapshot();
+      const nextTask = await recalculateTask(this.task.id, operations);
+      this.applyTask(nextTask, selection);
+      this.recomputePreviewLocally();
+      return nextTask.items.filter((item) => item.item_name).length;
+    },
+    async createBackup(): Promise<TaskBackup | null> {
+      if (!this.task?.id) return null;
+      await this.syncEditableItems(true);
+      return exportTask(this.task.id);
+    },
+    async restoreBackup(backup: TaskBackup) {
+      await this.syncEditableItems(true);
+      const task = await importTaskBackup(backup);
+      this.localEdits = {};
+      this.applyTask(task);
+      this.recomputePreviewLocally();
+      this.message = `已导入任务备份，共 ${task.items.length} 项`;
+    },
+    async startNewTask() {
+      try {
+        await this.syncEditableItems(true);
+      } catch (error) {
+        this.handleError(error);
+        return;
+      }
+      this.task = null;
+      this.localEdits = {};
+      this.lastPlan = null;
+      this.lastRename = null;
+      this.message = "已新建空白任务，请拖入发票";
+    },
     preview(template?: string) {
       this.recomputePreviewLocally(template);
       this.message = "命名预览已更新";
     },
+    scheduleEditableSync() {
+      const previous = editSyncTimers.get(this);
+      if (previous) clearTimeout(previous);
+      const timer = setTimeout(() => {
+        editSyncTimers.delete(this);
+        void this.syncEditableItems(true).catch((error) => this.handleError(error));
+      }, 300);
+      editSyncTimers.set(this, timer);
+    },
     async syncEditableItems(silent = false) {
-      if (!this.task?.id) return;
-      const patches: SyncItemPatch[] = Object.entries(this.localEdits).map(([itemId, value]) => ({
-        item_id: itemId,
-        invoice_date: value.invoice_date,
-        amount: value.amount,
-        category: value.category,
-      }));
-      if (!patches.length) return;
-      const selection = this.selectionSnapshot();
-      const nextTask = await syncItems(this.task.id, patches);
-      for (const patch of patches) {
-        delete this.localEdits[patch.item_id];
-      }
-      this.applyTask(nextTask, selection);
-      this.recomputePreviewLocally();
-      if (!silent) {
-        this.message = "已同步编辑内容";
+      const timer = editSyncTimers.get(this);
+      if (timer) clearTimeout(timer);
+      editSyncTimers.delete(this);
+
+      const previous = editSyncRequests.get(this) ?? Promise.resolve();
+      const current = previous.catch(() => undefined).then(async () => {
+        while (this.task?.id && this.hasPendingEdits) {
+          const taskId = this.task.id;
+          const edits = Object.entries(this.localEdits).map(([itemId, value]) => ({
+            itemId,
+            value: { ...value },
+          }));
+          const patches: SyncItemPatch[] = edits.map(({ itemId, value }) => ({
+            item_id: itemId,
+            invoice_date: value.invoice_date,
+            amount: value.amount,
+            category: value.category,
+          }));
+          const selection = this.selectionSnapshot();
+          const nextTask = await syncItems(taskId, patches);
+          if (this.task?.id !== taskId) return;
+          for (const { itemId, value } of edits) {
+            const latest = this.localEdits[itemId];
+            if (latest && latest.invoice_date === value.invoice_date
+              && latest.amount === value.amount && latest.category === value.category) {
+              delete this.localEdits[itemId];
+            }
+          }
+          this.applyTask(nextTask, selection);
+          this.recomputePreviewLocally();
+          if (!silent) this.message = "已同步编辑内容";
+        }
+      });
+      editSyncRequests.set(this, current);
+      try {
+        await current;
+      } finally {
+        if (editSyncRequests.get(this) === current) editSyncRequests.delete(this);
       }
     },
     async removeSelectedItemsFromList() {
@@ -370,6 +498,7 @@ export const useInvoiceStore = defineStore("invoice", {
       }
       this.loading = true;
       try {
+        await this.syncEditableItems(true);
         const selection = this.selectionSnapshot();
         const nextTask = await removeItems(this.task.id, targetIds);
         this.applyTask(nextTask, selection);
@@ -452,6 +581,9 @@ export const useInvoiceStore = defineStore("invoice", {
               result: "failed",
               message: "tauri_result_empty",
             };
+            if (first.result === "skipped" && planItem.reason) {
+              first.message = planItem.reason;
+            }
             tauriResults.push(first);
             this.renameDone += 1;
           }

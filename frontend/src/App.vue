@@ -22,11 +22,11 @@ import {
 import Draggable from "vuedraggable";
 import InvoicePreviewPanel from "./components/InvoicePreviewPanel.vue";
 import { useInvoiceStore } from "./stores/invoice";
+import { initializeApiClient } from "./api/client";
 import { isTauriRuntime } from "./api/tauri";
-import type { InvoiceItem } from "./api/types";
+import type { InvoiceItem, TaskBackup } from "./api/types";
 
 const INVALID_FILENAME_CHAR_PATTERN = /[<>:"/\\|?*\x00-\x1F]/g;
-const SETTINGS_LOCAL_API_KEY = "invoice.smart-rename.siliconflow-api-key";
 const DEFAULT_TEMPLATE = "{date}-{category}-{amount}";
 
 type MappingRow = { id: string; category: string; keywords: string[] };
@@ -58,10 +58,13 @@ const showDeleteConfirm = ref(false);
 const pendingDeleteRowId = ref<string | null>(null);
 const showRenameConfirm = ref(false);
 const showClearConfirm = ref(false);
+const showRerecognizeConfirm = ref(false);
 const dragging = ref(false);
 const previewOpen = ref(false);
 const activePreviewItemId = ref<string | null>(null);
 let unlistenTauriDrop: null | (() => void) = null;
+const listFilter = ref("all");
+const backupFileInput = ref<HTMLInputElement | null>(null);
 
 const summaryText = computed(() => {
   const summary = store.task?.summary;
@@ -72,6 +75,26 @@ const summaryText = computed(() => {
 const selectedCount = computed(() => store.selectedIds.length);
 const hasSelection = computed(() => selectedCount.value > 0);
 const selectedItems = computed(() => (store.task?.items ?? []).filter((item) => item.selected));
+const pendingCount = computed(() => (store.task?.items ?? []).filter((item) => item.status === "pending").length);
+const failedCount = computed(() => (store.task?.items ?? []).filter((item) => item.status === "failed").length);
+const selectedSuccessCount = computed(() => selectedItems.value.filter((item) => item.status === "ok").length);
+const filteredItems = computed(() => {
+  const items = store.task?.items ?? [];
+  if (listFilter.value === "pending") return items.filter((item) => item.status === "pending");
+  if (listFilter.value === "failed") return items.filter((item) => item.status === "failed");
+  if (listFilter.value === "ok") return items.filter((item) => item.status === "ok");
+  if (listFilter.value === "manual") return items.filter((item) => item.recognition_source === "manual");
+  if (listFilter.value === "renamed") return items.filter((item) => item.result === "renamed");
+  return items;
+});
+const filterOptions = [
+  { label: "全部", value: "all" },
+  { label: "待识别", value: "pending" },
+  { label: "识别失败", value: "failed" },
+  { label: "识别成功", value: "ok" },
+  { label: "人工修改", value: "manual" },
+  { label: "已改名", value: "renamed" },
+];
 const hasSelectedEmptyNewName = computed(() =>
   selectedItems.value.some((item) => !(item.suggested_name ?? "").trim()),
 );
@@ -121,8 +144,11 @@ const localApiKeyChanged = computed(() => apiKeyInput.value.trim() !== settingsS
 const hasPendingSettingsChanges = computed(() => backendSettingsChanged.value || localApiKeyChanged.value);
 
 onMounted(async () => {
+  window.addEventListener("beforeunload", warnPendingEdits);
+  await initializeApiClient();
   await store.loadSettings();
   syncSettingsToForm();
+  await store.restoreRecentTask();
   await bindTauriDropEvents();
 });
 
@@ -153,27 +179,6 @@ watch(
   { deep: false },
 );
 
-function loadLocalApiKey(): string {
-  try {
-    return localStorage.getItem(SETTINGS_LOCAL_API_KEY)?.trim() || "";
-  } catch {
-    return "";
-  }
-}
-
-function persistLocalApiKey(nextValue: string) {
-  const value = nextValue.trim();
-  try {
-    if (value) {
-      localStorage.setItem(SETTINGS_LOCAL_API_KEY, value);
-    } else {
-      localStorage.removeItem(SETTINGS_LOCAL_API_KEY);
-    }
-  } catch {
-    // ignore runtime storage errors
-  }
-}
-
 function syncSettingsToForm() {
   const settings = store.settings;
   if (!settings) return;
@@ -182,9 +187,9 @@ function syncSettingsToForm() {
   selectedModel.value = settings.siliconflow_model || "Qwen/Qwen3-VL-32B-Instruct";
   mappingRows.value = mappingToRows(settings.category_mapping);
 
-  const localApiKey = loadLocalApiKey();
-  apiKeyInput.value = localApiKey;
-  store.setSessionApiKey(localApiKey);
+  const localApiKey = "";
+  apiKeyInput.value = "";
+  store.setSessionApiKey("");
 
   settingsSnapshot.value = {
     model: selectedModel.value,
@@ -232,21 +237,23 @@ async function saveAllSettings() {
 
   settingsSaving.value = true;
   try {
+    const templateChanged = normalizedTemplatePreview.value !== settingsSnapshot.value.template;
+    const mappingChanged = currentMappingSignature.value !== settingsSnapshot.value.mappingSignature;
     const normalizedTemplate = normalizeTemplate(filenameTemplate.value);
     filenameTemplate.value = normalizedTemplate;
     const mapping = rowsToMapping(mappingRows.value);
 
-    if (backendSettingsChanged.value) {
+    if (backendSettingsChanged.value || localApiKeyChanged.value) {
       await store.saveSettings({
         siliconflow_model: selectedModel.value,
         filename_template: normalizedTemplate,
         category_mapping: mapping,
+        siliconflow_api_key: localApiKeyChanged.value ? apiKeyInput.value.trim() : undefined,
       });
     }
 
     const localApiKey = apiKeyInput.value.trim();
-    persistLocalApiKey(localApiKey);
-    store.setSessionApiKey(localApiKey);
+    store.setSessionApiKey("");
 
     settingsSnapshot.value = {
       model: selectedModel.value,
@@ -255,10 +262,18 @@ async function saveAllSettings() {
       localApiKey,
     };
 
-    settingsSaveHint.value = `配置已保存：${new Date().toLocaleTimeString()}`;
-    store.message = "设置已保存";
-  } catch {
-    // error message handled in store
+    const operations: Array<"category" | "name"> = [];
+    if (mappingChanged) operations.push("category");
+    if (templateChanged) operations.push("name");
+    const recalculated = operations.length ? await store.recalculate(operations) : 0;
+    settingsSaveHint.value = operations.length
+      ? `配置已保存，已零费用重算 ${recalculated} 项`
+      : `配置已保存：${new Date().toLocaleTimeString()}`;
+    store.message = operations.length
+      ? `设置已保存并重新分类/命名 ${recalculated} 项，本次未调用云模型`
+      : "设置已保存";
+  } catch (error) {
+    store.handleError(error);
   } finally {
     settingsSaving.value = false;
   }
@@ -422,6 +437,10 @@ function statusLabel(item: InvoiceItem): string {
 }
 
 function failureReasonLabel(item: InvoiceItem): string {
+  if (item.result === "skipped") {
+    if (item.result_message === "source_changed") return "源文件内容已变化，请重新导入并识别";
+    if (item.result_message === "source_not_found") return "源文件已移动或删除，请重新导入";
+  }
   if (item.result === "failed") {
     const message = item.result_message || "改名失败";
     const normalized = message.toLowerCase();
@@ -440,7 +459,90 @@ function failureReasonLabel(item: InvoiceItem): string {
   if (item.failure_reason === "missing_required_fields") return "缺少关键字段";
   if (item.failure_reason === "cloud_request_failed") return "云端识别请求失败";
   if (item.failure_reason === "file_not_found") return "文件不存在";
+  if (item.failure_reason === "file_too_large") return "文件超过 25MB，未上传识别";
+  if (item.failure_reason === "pdf_too_many_pages") return "PDF 超过 20 页，未上传识别";
+  if (item.failure_reason === "invalid_pdf") return "PDF 文件无效或无法读取";
+  if (item.failure_reason === "invalid_image") return "图片文件无效或格式不符，未上传识别";
   return item.failure_reason;
+}
+
+function recognitionSourceLabel(item: InvoiceItem): string {
+  if (item.recognition_source === "cloud") return "云端";
+  if (item.recognition_source === "cache") return "缓存";
+  if (item.recognition_source === "manual") return "人工";
+  return "未识别";
+}
+
+function recognitionMetaLabel(item: InvoiceItem): string {
+  const calls = item.cloud_call_count > 0 ? ` · 云调用 ${item.cloud_call_count} 次` : "";
+  return `来源：${recognitionSourceLabel(item)}${calls}`;
+}
+
+function recognitionMetaTitle(item: InvoiceItem): string {
+  const parts = [
+    `来源：${recognitionSourceLabel(item)}`,
+    item.recognition_model ? `模型：${item.recognition_model}` : "",
+    item.recognized_at ? `识别时间：${new Date(item.recognized_at).toLocaleString()}` : "",
+    item.prompt_version ? `提示词版本：${item.prompt_version}` : "",
+  ];
+  return parts.filter(Boolean).join("\n");
+}
+
+function openRerecognizeConfirm() {
+  if (!hasSelection.value) {
+    store.message = "请先勾选需要重新识别的发票";
+    return;
+  }
+  showRerecognizeConfirm.value = true;
+}
+
+async function confirmRerecognize() {
+  showRerecognizeConfirm.value = false;
+  await store.recognize(store.selectedIds, true);
+}
+
+async function exportCurrentTask() {
+  try {
+    const backup = await store.createBackup();
+    if (!backup) {
+      store.message = "当前没有可导出的任务";
+      return;
+    }
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `发票任务-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    store.message = "任务备份已导出";
+  } catch (error) {
+    store.handleError(error);
+  }
+}
+
+async function onBackupFileSelected(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  let backup: TaskBackup;
+  try {
+    backup = JSON.parse(await file.text()) as TaskBackup;
+    if (backup.format !== "invoice-smart-rename-task" || backup.version !== 1 || !backup.task) {
+      throw new Error("invalid_backup");
+    }
+  } catch {
+    store.message = "任务备份格式无效";
+    input.value = "";
+    return;
+  }
+  try {
+    await store.restoreBackup(backup);
+  } catch (error) {
+    store.handleError(error);
+  } finally {
+    input.value = "";
+  }
 }
 
 function allSelectedNext(): boolean {
@@ -679,11 +781,18 @@ async function confirmClearList() {
 }
 
 onUnmounted(() => {
+  window.removeEventListener("beforeunload", warnPendingEdits);
   if (unlistenTauriDrop) {
     unlistenTauriDrop();
     unlistenTauriDrop = null;
   }
 });
+
+function warnPendingEdits(event: BeforeUnloadEvent) {
+  if (!store.hasPendingEdits) return;
+  event.preventDefault();
+  event.returnValue = "";
+}
 </script>
 
 <template>
@@ -708,11 +817,26 @@ onUnmounted(() => {
                 <n-space>
                   <n-button
                     type="primary"
-                    :disabled="!store.hasTask || !hasSelection"
+                    :disabled="!store.hasTask || !pendingCount || store.loading"
                     :loading="store.loading"
-                    @click="store.recognize(store.selectedIds)"
+                    @click="store.recognizePending()"
                   >
-                    识别选中发票
+                    识别未处理项（{{ pendingCount }}）
+                  </n-button>
+                  <n-button
+                    :disabled="!store.hasTask || !failedCount || store.loading"
+                    @click="store.retryFailed()"
+                  >
+                    重试失败项（{{ failedCount }}）
+                  </n-button>
+                  <n-button
+                    :disabled="!store.hasTask || !hasSelection || store.loading"
+                    @click="openRerecognizeConfirm"
+                  >
+                    重新识别选中
+                  </n-button>
+                  <n-button v-if="store.isRecognizing" type="error" @click="store.stopRecognizing()">
+                    停止识别
                   </n-button>
                   <n-button
                     :disabled="!store.hasTask || !hasSelection || store.loading"
@@ -735,6 +859,16 @@ onUnmounted(() => {
                   </n-button>
                 </n-space>
                 <n-space>
+                  <n-button size="small" @click="store.startNewTask()">新建任务</n-button>
+                  <n-button size="small" :disabled="!store.hasTask" @click="exportCurrentTask">导出备份</n-button>
+                  <n-button size="small" @click="backupFileInput?.click()">导入备份</n-button>
+                  <input
+                    ref="backupFileInput"
+                    type="file"
+                    accept="application/json,.json"
+                    hidden
+                    @change="onBackupFileSelected"
+                  />
                   <n-button size="small" @click="store.toggleSelectAll(allSelectedNext())">
                     {{ allSelectedNext() ? "全选" : "全不选" }}
                   </n-button>
@@ -752,6 +886,12 @@ onUnmounted(() => {
                 <div class="work-list-pane">
                   <div class="table-head">
                     <h2>识别列表</h2>
+                    <n-select
+                      v-model:value="listFilter"
+                      :options="filterOptions"
+                      size="small"
+                      style="width: 140px"
+                    />
                   </div>
 
                   <n-spin :show="store.loading" class="list-spin">
@@ -784,7 +924,7 @@ onUnmounted(() => {
                         </thead>
                         <tbody>
                           <tr
-                            v-for="item in store.task.items"
+                            v-for="item in filteredItems"
                             :key="item.id"
                             :class="{ 'preview-active-row': previewOpen && activePreviewItem?.id === item.id }"
                             @click="(event) => onRecordRowClick(event, item)"
@@ -797,6 +937,9 @@ onUnmounted(() => {
                             </td>
                             <td>
                               <n-tag :type="statusType(item)" size="small" round>{{ statusLabel(item) }}</n-tag>
+                              <div class="row-tip" :title="recognitionMetaTitle(item)">
+                                {{ recognitionMetaLabel(item) }}
+                              </div>
                               <div v-if="failureReasonLabel(item)" class="row-tip">
                                 {{ failureReasonLabel(item) }}
                               </div>
@@ -875,10 +1018,10 @@ onUnmounted(() => {
                       v-model:value="apiKeyInput"
                       type="password"
                       show-password-on="click"
-                      placeholder="可输入本机专用 API Key（仅保存到 localStorage）"
+                      placeholder="输入新 API Key；留空则保持当前配置"
                     />
                   </div>
-                  <p class="tip">说明：此处 API Key 仅保存到本机 localStorage，不写入 .env 文件。</p>
+                  <p class="tip">说明：API Key 保存到本机应用数据目录，不写入安装目录；留空表示保持现有配置。</p>
                   <p class="tip" v-if="apiKeyConfigured">当前已检测到可用 API Key（本地或 .env）</p>
                   <p class="tip" v-else>当前未检测到 API Key，识别会失败</p>
                 </div>
@@ -972,6 +1115,7 @@ onUnmounted(() => {
         <div v-if="activeTab === 'work'" class="status-bar">
           <div class="status-meta">
             <span class="status-main">{{ statusBarText }}</span>
+            <span v-if="store.hasPendingEdits" class="status-summary">人工修改待保存</span>
             <span class="status-summary">{{ summaryText }}</span>
           </div>
           <div class="status-amount">{{ amountSummaryText }}</div>
@@ -1010,6 +1154,17 @@ onUnmounted(() => {
           @after-leave="cancelRemoveMappingRow"
         >
           确认删除这条映射？
+        </n-modal>
+
+        <n-modal
+          v-model:show="showRerecognizeConfirm"
+          preset="dialog"
+          title="重新识别确认"
+          positive-text="确认并调用模型"
+          negative-text="取消"
+          @positive-click="confirmRerecognize"
+        >
+          将强制重新识别 {{ selectedCount }} 项，其中 {{ selectedSuccessCount }} 项已有成功结果。此操作会产生新的云模型调用费用。
         </n-modal>
 
         <n-modal

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 
 InvoiceStatus = Literal["pending", "ok", "failed"]
+RecognitionSource = Literal["pending", "cloud", "cache", "manual"]
 RenameAction = Literal["rename", "skip", "manual_edit_required"]
 ConflictType = Literal["none", "same_name", "exists_other"]
 CommitResultStatus = Literal["pending", "renamed", "skipped", "failed"]
@@ -42,6 +43,13 @@ class InvoiceItem(BaseModel):
 
     extracted_text: str | None = None
 
+    file_sha256: str | None = None
+    recognition_source: RecognitionSource = "pending"
+    recognized_at: datetime | None = None
+    recognition_model: str | None = None
+    prompt_version: str | None = None
+    cloud_call_count: int = 0
+
     status: InvoiceStatus = "pending"
     failure_reason: str | None = None
 
@@ -69,12 +77,24 @@ class TaskState(BaseModel):
 
 class ImportRequest(BaseModel):
     paths: list[str]
+    task_id: str | None = None
+    new_task: bool = False
 
 
 class RecognizeRequest(BaseModel):
     task_id: str
     item_ids: list[str] | None = None
     session_api_key: str | None = None
+    force_refresh: bool = False
+
+
+class RecalculateRequest(BaseModel):
+    operations: list[Literal["category", "name"]]
+    item_ids: list[str] | None = None
+
+
+class TaskBackupImportRequest(BaseModel):
+    task: TaskState
 
 
 class PreviewRequest(BaseModel):

@@ -17,6 +17,8 @@ frontend/src/**/*.js
 
 # Rust / Tauri
 src-tauri/target/
+src-tauri/binaries/*.exe
+backend/.pyinstaller/
 
 # Local data
 .env

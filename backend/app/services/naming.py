@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import hashlib
 from pathlib import Path
 import re
 
@@ -127,23 +128,39 @@ def build_rename_plan(items: list[InvoiceItem], selected_ids: set[str] | None = 
         if item.id not in selected_ids:
             action = "skip"
             reason = "not_selected"
-        elif item.status == "failed":
+        elif item.file_sha256 and not source.is_file():
+            action = "skip"
+            reason = "source_not_found"
+        elif item.file_sha256:
+            try:
+                digest = hashlib.sha256()
+                with source.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                if digest.hexdigest() != item.file_sha256:
+                    action = "skip"
+                    reason = "source_changed"
+            except OSError:
+                action = "skip"
+                reason = "source_not_found"
+
+        if action == "rename" and item.status == "failed":
             action = "skip"
             reason = "recognition_failed"
             conflict_type = "none"
-        elif not chosen_name:
+        elif action == "rename" and not chosen_name:
             action = "skip"
             reason = "missing_suggested_name"
             conflict_type = "none"
-        elif target_name == item.old_name:
+        elif action == "rename" and target_name == item.old_name:
             action = "skip"
             reason = "same_name"
             conflict_type = "same_name"
-        elif str(target_path).lower() in used_targets:
+        elif action == "rename" and str(target_path).lower() in used_targets:
             action = "skip"
             reason = "duplicate_in_batch"
             conflict_type = "exists_other"
-        elif target_path.exists() and target_path.resolve() != source.resolve():
+        elif action == "rename" and target_path.exists() and target_path.resolve() != source.resolve():
             action = "skip"
             reason = "target_exists"
             conflict_type = "exists_other"

@@ -1,5 +1,10 @@
 import type { CommitPlanItem, CommitRenameItemResult, PreviewPayload } from "./types";
 
+export interface BackendInfo {
+  api_base_url: string;
+  session_token: string;
+}
+
 export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
@@ -28,4 +33,10 @@ export async function readPreviewFile(sourcePath: string): Promise<PreviewPayloa
     sourcePath,
   });
   return payload;
+}
+
+export async function getBackendInfo(): Promise<BackendInfo | null> {
+  if (!isTauriRuntime()) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<BackendInfo>("backend_info");
 }
