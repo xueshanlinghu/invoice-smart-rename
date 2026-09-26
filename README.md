@@ -10,7 +10,7 @@
 
 1. 进入“设置”页面：
    - 选择模型（默认即可）
-   - 填写 API Key（或者在启动前在.env文件中配置）
+   - 填写 API Key；便携版不需要 `.env`
    - 点击“保存配置”
 
 2. 回到“发票处理”页面：
@@ -38,7 +38,9 @@
 - 同一文件在相同模型和提示词版本下会优先复用缓存；修改关键词映射或命名模板不会再次调用云模型。
 - 再次拖入文件会追加到当前任务，并按路径和文件内容去重；点击“新建任务”可从空列表开始。
 - 支持导出和导入 JSON 任务备份。备份包含识别字段和原文件路径，不包含发票文件本身。
-- Windows 默认数据目录为 `%LOCALAPPDATA%\InvoiceSmartRename`；安装版由 Tauri 使用应用数据目录。
+- Windows 便携版将 `invoice-smart-rename.sqlite3` 放在 `invoice-smart-rename.exe` 所在目录，API Key、分类映射、任务和 OCR 缓存都在其中；该目录必须可写。
+- 首次启动新版便携程序时，若程序目录还没有数据库，会从旧的 `%APPDATA%\com.myfox.invoice-smart-rename` 创建一份完整 SQLite 快照；旧数据库保留，已有同目录数据库不会被覆盖。
+- 源码开发模式仍使用 `%LOCALAPPDATA%\InvoiceSmartRename`，可通过 `INVOICE_APP_DATA_DIR` 指定其他位置。关闭程序后搬运便携版时，应一起复制两个 EXE、数据库及存在的 `-wal` / `-shm` 文件。
 - 单文件最大 25MB，PDF 最大 20 页；超出限制的文件不会上传到云端。
 - 人工修改日期、类别、金额后会自动保存；状态栏显示“人工修改待保存”时，请等待保存完成再关闭程序。导出备份前也会先完成保存。
 
@@ -141,7 +143,7 @@ if (-not $found) {
 copy .env.example .env
 ```
 
-也可以不创建 `.env`，启动后直接在设置页保存 API Key；`.env` 主要用于开发环境提供初始默认值。
+也可以不创建 `.env`，启动后直接在设置页保存 API Key；`.env` 仅作为源码开发时的可选初始配置和回退来源。便携版不需要携带它。
 
 3. 安装依赖：
 
@@ -164,9 +166,9 @@ npm run tauri:dev
 
 开发模式仍需分别保持后端 API 和 Tauri 两个终端运行，以便后端热重载。
 
-## 构建 Windows 安装程序
+## 构建 Windows 便携版
 
-Windows 成品使用 Tauri 2 + NSIS。Python/FastAPI 后端会先通过 PyInstaller 构建成 sidecar，再被打入安装程序；最终用户不需要安装 Python、Node.js、Rust 或 uv。
+Windows 便携版由 Tauri 2 程序和 PyInstaller 打包的 FastAPI sidecar 组成。最终用户不需要安装 Python、Node.js、Rust 或 uv。
 
 ### 构建环境
 
@@ -182,6 +184,17 @@ Windows 成品使用 Tauri 2 + NSIS。Python/FastAPI 后端会先通过 PyInstal
 uv sync --project backend --extra build
 npm install
 ```
+
+生成日常使用的便携版：
+
+```powershell
+npm run build:backend:win
+npx tauri build --no-bundle --config src-tauri/tauri.bundle.conf.json
+```
+
+双击 `src-tauri/target/release/invoice-smart-rename.exe`；同目录须保留 `invoice-backend.exe`。数据库也会放在该目录，程序会自动启动后端。将这两个 EXE 与数据库放在同一可写文件夹，即可在另一台 Windows 电脑使用。
+
+### 可选：NSIS 安装程序
 
 生成完整 NSIS 安装程序：
 
@@ -201,7 +214,7 @@ npm run dist:win
 src-tauri/target/release/bundle/nsis/
 ```
 
-若暂时只需在构建电脑上试用，先运行 `npm run build:backend:win`，再运行 `npx tauri build --no-bundle --config src-tauri/tauri.bundle.conf.json`，然后双击 `src-tauri/target/release/invoice-smart-rename.exe`。同目录须保留 `invoice-backend.exe`；桌面程序会自动启动它，无需另开后端终端。
+当前数据目录设计面向便携版。NSIS 若安装在 `Program Files` 等不可写目录，程序无法在 EXE 旁保存数据库；日常分发请使用上面的便携版。
 
 多屏幕试用时，可在不同缩放比例的屏幕间来回拖动窗口，再试最小化和恢复。程序会在窗口标题栏移出所有屏幕可用区域后自动移回；若仍找不到窗口，可点击 Windows 系统托盘中的程序图标，选择“恢复窗口到主屏”。托盘菜单中的“退出程序”可直接关闭程序。
 

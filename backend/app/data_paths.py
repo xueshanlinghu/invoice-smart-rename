@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 APP_DIR_NAME = "InvoiceSmartRename"
+DATABASE_FILENAME = "invoice-smart-rename.sqlite3"
 
 
 def app_data_dir() -> Path:
@@ -23,4 +24,4 @@ def app_data_dir() -> Path:
 
 
 def database_path() -> Path:
-    return app_data_dir() / "invoice-smart-rename.sqlite3"
+    return app_data_dir() / DATABASE_FILENAME

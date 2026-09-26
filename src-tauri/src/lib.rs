@@ -4,6 +4,8 @@ use base64::{
 };
 use serde::{Deserialize, Serialize};
 #[cfg(not(debug_assertions))]
+use std::fs::OpenOptions;
+#[cfg(not(debug_assertions))]
 use std::net::TcpListener;
 #[cfg(not(debug_assertions))]
 use std::net::TcpStream;
@@ -382,27 +384,53 @@ fn available_loopback_port() -> Result<u16, String> {
 }
 
 #[cfg(not(debug_assertions))]
+fn portable_data_dir() -> Result<PathBuf, String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let data_dir = executable
+        .parent()
+        .ok_or_else(|| String::from("无法确定程序所在目录"))?
+        .to_path_buf();
+    let probe_path = data_dir.join(format!(
+        ".invoice-smart-rename-write-test-{}",
+        Uuid::new_v4()
+    ));
+    let probe = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe_path)
+        .map_err(|error| format!("程序目录不可写，无法保存数据库：{} ({error})", data_dir.display()))?;
+    drop(probe);
+    std::fs::remove_file(&probe_path).map_err(|error| error.to_string())?;
+    Ok(data_dir)
+}
+
+#[cfg(not(debug_assertions))]
 fn start_backend(app: &tauri::App) -> Result<BackendState, String> {
     let port = available_loopback_port()?;
     let token = Uuid::new_v4().to_string();
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?;
-    std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
+    let data_dir = portable_data_dir()?;
+    let legacy_data_dir = app.path().app_data_dir().ok();
+
+    let mut args = vec![
+        "--port".to_string(),
+        port.to_string(),
+        "--token".to_string(),
+        token.clone(),
+        "--data-dir".to_string(),
+        data_dir.to_string_lossy().into_owned(),
+    ];
+    if let Some(legacy_data_dir) = legacy_data_dir {
+        args.extend([
+            "--legacy-data-dir".to_string(),
+            legacy_data_dir.to_string_lossy().into_owned(),
+        ]);
+    }
 
     let sidecar = app
         .shell()
         .sidecar("invoice-backend")
         .map_err(|error| error.to_string())?
-        .args([
-            "--port".to_string(),
-            port.to_string(),
-            "--token".to_string(),
-            token.clone(),
-            "--data-dir".to_string(),
-            data_dir.to_string_lossy().into_owned(),
-        ]);
+        .args(args);
     let (mut events, child) = sidecar.spawn().map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn(async move {
         while events.recv().await.is_some() {}

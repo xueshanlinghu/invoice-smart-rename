@@ -94,10 +94,11 @@
 ### 数据与安全
 
 - 开发模式默认数据目录：Windows 的 `%LOCALAPPDATA%\InvoiceSmartRename`。
-- 安装版通过 Tauri 应用数据目录传给 sidecar。
-- `.env` 仅作为开发初始配置和回退来源，不提交到 Git。
-- API Key 已从前端 `localStorage` 移到后端应用数据目录；当前尚未接入 Windows Credential Manager。
-- 安装版后端使用动态回环端口和随机会话令牌；除 `/api/health` 外的 API 必须校验 `X-App-Token`。
+- 便携版始终将 SQLite 数据库放在主程序 EXE 所在目录；Tauri 将该目录传给 sidecar，不可写时应明确报错，不得静默改用其他目录。
+- 首次运行新版便携程序且同目录无数据库时，从旧 Tauri 应用数据目录通过 SQLite 备份接口迁移，保留旧库，不覆盖已有便携库。
+- `.env` 仅作为源码开发的可选初始配置和回退来源，不提交到 Git；便携版不需要它。
+- API Key 已从前端 `localStorage` 移到后端 SQLite 数据库；便携版数据库与 EXE 同目录，当前尚未接入 Windows Credential Manager。
+- 便携版后端使用动态回环端口和随机会话令牌；除 `/api/health` 外的 API 必须校验 `X-App-Token`。
 - 不得在日志、测试输出、回复或提交中泄露真实 API Key。
 
 ## 开发与验证命令
@@ -152,6 +153,7 @@ npm run dist:win
 - `build:backend:win`：PyInstaller 生成带 Rust target triple 后缀的 sidecar。
 - `tauri:build:raw`：使用 `src-tauri/tauri.bundle.conf.json` 构建 NSIS。
 - `dist:win` / `tauri:build`：先构建 sidecar，再构建 Tauri 安装程序。
+- 当前日常分发方式为便携版：`build:backend:win` 后执行 `npx tauri build --no-bundle --config src-tauri/tauri.bundle.conf.json`。运行目录须可写，并保留主程序与 sidecar 两个 EXE。
 
 正常安装包目录：
 

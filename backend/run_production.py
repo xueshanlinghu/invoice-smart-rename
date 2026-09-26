@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 
 
 def parse_args() -> argparse.Namespace:
@@ -10,6 +11,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--token", default="")
     parser.add_argument("--data-dir", default="")
+    parser.add_argument("--legacy-data-dir", default="")
     return parser.parse_args()
 
 
@@ -19,6 +21,10 @@ def main() -> None:
         os.environ["INVOICE_SESSION_TOKEN"] = args.token
     if args.data_dir:
         os.environ["INVOICE_APP_DATA_DIR"] = args.data_dir
+        if args.legacy_data_dir:
+            from app.portable_data import migrate_legacy_database
+
+            migrate_legacy_database(Path(args.data_dir), Path(args.legacy_data_dir))
 
     import uvicorn
     from app.main import app

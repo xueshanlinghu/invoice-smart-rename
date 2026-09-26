@@ -2,7 +2,7 @@
 name = "invoice-smart-rename-backend"
 version = "0.1.0"
 description = "Cloud VLM invoice recognition and rename service"
-readme = "../README.md"
+readme = { text = "发票智能识别并重命名的本地 FastAPI 后端。", content-type = "text/markdown" }
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115.6",
