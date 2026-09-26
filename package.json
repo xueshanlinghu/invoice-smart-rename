@@ -6,8 +6,12 @@
     "dev:api": "uv run --project backend python backend/run_dev.py",
     "dev:web": "vite --config frontend/vite.config.ts",
     "build:web": "vue-tsc -b frontend/tsconfig.json && vite build --config frontend/vite.config.ts",
+    "test:web": "vitest run --config frontend/vite.config.ts",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "build:backend:win": "powershell -ExecutionPolicy Bypass -File scripts/build-backend-win.ps1",
+    "tauri:build:raw": "tauri build --config src-tauri/tauri.bundle.conf.json",
+    "dist:win": "npm run build:backend:win && npm run tauri:build:raw",
+    "tauri:build": "npm run dist:win"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.4.0",
@@ -23,6 +27,7 @@
     "@vitejs/plugin-vue": "^5.2.1",
     "typescript": "^5.7.3",
     "vite": "^6.1.0",
+    "vitest": "^3.2.4",
     "vue-tsc": "^2.2.2"
   }
 }

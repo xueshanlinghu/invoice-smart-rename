@@ -2,6 +2,7 @@ export type InvoiceStatus = "pending" | "ok" | "failed";
 export type RenameAction = "rename" | "skip" | "manual_edit_required";
 export type ConflictType = "none" | "same_name" | "exists_other";
 export type CommitResultStatus = "pending" | "renamed" | "skipped" | "failed";
+export type RecognitionSource = "pending" | "cloud" | "cache" | "manual";
 
 export interface TaskSummary {
   total: number;
@@ -25,6 +26,12 @@ export interface InvoiceItem {
   category: string | null;
   vendor_name: string | null;
   extracted_text: string | null;
+  file_sha256: string | null;
+  recognition_source: RecognitionSource;
+  recognized_at: string | null;
+  recognition_model: string | null;
+  prompt_version: string | null;
+  cloud_call_count: number;
   status: InvoiceStatus;
   failure_reason: string | null;
   suggested_name: string | null;
@@ -106,4 +113,10 @@ export interface AppSettingsUpdate {
   siliconflow_api_key?: string;
   filename_template?: string;
   category_mapping?: Record<string, string[]>;
+}
+
+export interface TaskBackup {
+  format: "invoice-smart-rename-task";
+  version: number;
+  task: TaskState;
 }

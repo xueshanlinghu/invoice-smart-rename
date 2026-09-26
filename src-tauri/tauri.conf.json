@@ -13,8 +13,12 @@
     "windows": [
       {
         "title": "发票智能识别并重命名",
-        "width": 1480,
-        "height": 920,
+        "width": 1280,
+        "height": 760,
+        "center": true,
+        "preventOverflow": true,
+        "minWidth": 800,
+        "minHeight": 500,
         "resizable": true
       }
     ],
@@ -24,7 +28,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "icon": [
       "icons/icon.ico",
       "icons/icon.png"

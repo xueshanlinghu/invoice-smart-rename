@@ -5,8 +5,10 @@ import type {
   CommitPlanResponse,
   CommitRenameResponse,
   SyncItemPatch,
+  TaskBackup,
   TaskState,
 } from "./types";
+import { getBackendInfo } from "./tauri";
 
 const defaultApiBase = import.meta.env.VITE_API_BASE_URL || __APP_DEFAULT_API_BASE__ || "http://127.0.0.1:8765";
 
@@ -15,8 +17,15 @@ const api = axios.create({
   timeout: 120000,
 });
 
-export async function importPaths(paths: string[]): Promise<TaskState> {
-  const { data } = await api.post<TaskState>("/api/import", { paths });
+export async function initializeApiClient(): Promise<void> {
+  const backend = await getBackendInfo();
+  if (!backend) return;
+  api.defaults.baseURL = backend.api_base_url;
+  api.defaults.headers.common["X-App-Token"] = backend.session_token;
+}
+
+export async function importPaths(paths: string[], taskId?: string, newTask = false): Promise<TaskState> {
+  const { data } = await api.post<TaskState>("/api/import", { paths, task_id: taskId, new_task: newTask });
   return data;
 }
 
@@ -24,12 +33,41 @@ export async function recognizeTask(
   taskId: string,
   itemIds?: string[],
   sessionApiKey?: string,
+  forceRefresh = false,
 ): Promise<TaskState> {
   const { data } = await api.post<TaskState>("/api/recognize", {
     task_id: taskId,
     item_ids: itemIds,
     session_api_key: sessionApiKey || undefined,
+    force_refresh: forceRefresh,
   });
+  return data;
+}
+
+export async function fetchRecentTask(): Promise<TaskState | null> {
+  const { data } = await api.get<TaskState | null>("/api/tasks/recent");
+  return data;
+}
+
+export async function recalculateTask(
+  taskId: string,
+  operations: Array<"category" | "name">,
+  itemIds?: string[],
+): Promise<TaskState> {
+  const { data } = await api.post<TaskState>(`/api/tasks/${taskId}/recalculate`, {
+    operations,
+    item_ids: itemIds,
+  });
+  return data;
+}
+
+export async function exportTask(taskId: string): Promise<TaskBackup> {
+  const { data } = await api.get<TaskBackup>(`/api/tasks/${taskId}/export`);
+  return data;
+}
+
+export async function importTaskBackup(backup: TaskBackup): Promise<TaskState> {
+  const { data } = await api.post<TaskState>("/api/tasks/import", { task: backup.task });
   return data;
 }
 
